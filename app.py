@@ -4,6 +4,7 @@ from db import query, get_almacenes, load_empresas
 from whatsapp import wa_bp
 from db_admin import db_admin_bp
 from ventas import ventas_bp
+from cartera import cartera_bp
 from auth import require_dashboard
 
 app = Flask(__name__)
@@ -11,6 +12,7 @@ app.secret_key = "aspel_sae_secret_2024"
 app.register_blueprint(wa_bp)
 app.register_blueprint(db_admin_bp)
 app.register_blueprint(ventas_bp)
+app.register_blueprint(cartera_bp)
 
 
 @app.after_request

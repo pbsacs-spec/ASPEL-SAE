@@ -77,7 +77,26 @@
     .error-msg { text-align: center; color: #b02020; padding: 40px; font-size: .9rem; }
 
     .table-scroll { overflow-x: auto; }
+
+    .tabs { display: flex; gap: 4px; }
+    .tab-btn {
+      padding: 9px 18px; border: none; background: transparent; cursor: pointer;
+      font-size: .87rem; font-weight: 600; color: #667; border-bottom: 3px solid transparent;
+    }
+    .tab-btn.active { color: #1a3a5c; border-bottom-color: #1a3a5c; }
+
+    #mapaContenedor {
+      height: 520px; border-radius: 8px; background: #eef2f7;
+    }
+    .leyenda { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: .78rem; color: #666; }
+    .leyenda-barra {
+      flex: 1; max-width: 260px; height: 10px; border-radius: 5px;
+      background: linear-gradient(90deg, #deebf7, #1a3a5c);
+    }
+    .mapa-nota { font-size: .78rem; color: #888; margin-top: 8px; }
+    .leaflet-tooltip { font-size: .8rem; }
   </style>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
 </head>
 <body>
 
@@ -138,8 +157,33 @@
     </div>
   </div>
 
-  <div id="contenedor">
-    <div class="empty">Cargando...</div>
+  <div class="tabs">
+    <button class="tab-btn active" id="tabBtnResumen" onclick="mostrarTab('resumen')">Resumen</button>
+    <button class="tab-btn" id="tabBtnMapa" onclick="mostrarTab('mapa')">Mapa</button>
+  </div>
+
+  <div id="tabResumen">
+    <div id="contenedor">
+      <div class="empty">Cargando...</div>
+    </div>
+  </div>
+
+  <div id="tabMapa" style="display:none">
+    <div class="card">
+      <div class="card-hdr">
+        <span id="mapaTitulo">México</span>
+        <button class="btn-outline btn-sm" id="btnVolverMexico" style="display:none" onclick="volverAMexico()">&larr; Volver a México</button>
+      </div>
+      <div class="card-body">
+        <div id="mapaContenedor"></div>
+        <div class="leyenda">
+          <span>$0</span>
+          <div class="leyenda-barra"></div>
+          <span id="leyendaMax">$0</span>
+        </div>
+        <div class="mapa-nota" id="mapaNota"></div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -148,12 +192,21 @@
 <script src="/static/vendor/xlsx.full.min.js"></script>
 <script src="/static/vendor/jspdf.umd.min.js"></script>
 <script src="/static/vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="/static/vendor/leaflet.js"></script>
 <script>
   const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   let filas = [];
   let sortCol = 'importe', sortDir = -1;
   let modoChart = 'importe';
   let chartTop = null, chartMes = null;
+
+  // ── Mapa ──────────────────────────────────────────────────────
+  let tabActual = 'resumen';
+  let datosMapa = null;
+  let estadosGeoJSON = null;
+  let mapaLeaflet = null, capaEstados = null, capaMunicipios = null;
+  let municipiosCache = {};
+  let estadoActual = null;
 
   const fmt  = v => Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtP = v => '$' + fmt(v);
@@ -211,6 +264,165 @@
     } catch (e) {
       document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
     }
+
+    cargarMapa();
+  }
+
+  // ── Pestanas ──────────────────────────────────────────────────
+  function mostrarTab(tab) {
+    tabActual = tab;
+    document.getElementById('tabResumen').style.display = tab === 'resumen' ? 'block' : 'none';
+    document.getElementById('tabMapa').style.display = tab === 'mapa' ? 'block' : 'none';
+    document.getElementById('tabBtnResumen').classList.toggle('active', tab === 'resumen');
+    document.getElementById('tabBtnMapa').classList.toggle('active', tab === 'mapa');
+    if (tab === 'mapa' && mapaLeaflet) {
+      setTimeout(() => {
+        mapaLeaflet.invalidateSize();
+        const capa = capaMunicipios || capaEstados;
+        if (capa) mapaLeaflet.fitBounds(capa.getBounds());
+      }, 50);
+    }
+  }
+
+  // ── Mapa ──────────────────────────────────────────────────────
+  async function cargarMapa() {
+    const anio    = document.getElementById('anio').value;
+    const mes     = document.getElementById('mes').value;
+    const tipo    = document.getElementById('tipo').value;
+    const empresa = empresaActual();
+
+    try {
+      const p = new URLSearchParams({ anio, mes, tipo });
+      if (empresa) p.set('empresa', empresa);
+      const res = await fetch('/api/ventas/mapa?' + p).then(r => r.json());
+      if (!res.ok) return;
+      datosMapa = res;
+      volverAMexico(true);
+      await initMapa();
+      redibujarEstados();
+    } catch (e) {
+      // el resumen ya muestra el error principal; el mapa simplemente no se actualiza
+    }
+  }
+
+  async function initMapa() {
+    if (mapaLeaflet) return;
+    mapaLeaflet = L.map('mapaContenedor', { zoomControl: true, attributionControl: false });
+    if (!estadosGeoJSON) {
+      estadosGeoJSON = await fetch('/static/vendor/geo/estados.json').then(r => r.json());
+    }
+  }
+
+  function colorEscala(valor, max) {
+    if (!max || valor <= 0) return '#eef2f7';
+    const t = Math.min(valor / max, 1);
+    const c1 = [222, 235, 247], c2 = [26, 58, 92];
+    const rgb = c1.map((c, i) => Math.round(c + (c2[i] - c) * t));
+    return `rgb(${rgb.join(',')})`;
+  }
+
+  function redibujarEstados() {
+    if (!mapaLeaflet || !estadosGeoJSON || !datosMapa) return;
+    if (capaMunicipios) { mapaLeaflet.removeLayer(capaMunicipios); capaMunicipios = null; }
+    if (capaEstados) mapaLeaflet.removeLayer(capaEstados);
+
+    const porId = {};
+    datosMapa.por_estado.forEach(e => porId[e.id] = e);
+    const max = Math.max(0, ...datosMapa.por_estado.map(e => e.importe));
+    document.getElementById('leyendaMax').textContent = fmtP(max);
+    actualizarNota();
+
+    capaEstados = L.geoJSON(estadosGeoJSON, {
+      style: feat => ({
+        fillColor: colorEscala((porId[feat.properties.id] || {}).importe || 0, max),
+        weight: 1, color: '#fff', fillOpacity: .88,
+      }),
+      onEachFeature: (feat, layer) => {
+        const info = porId[feat.properties.id];
+        const importe = info ? info.importe : 0;
+        const clientes = info ? info.num_clientes : 0;
+        layer.bindTooltip(
+          `<strong>${escH(feat.properties.name)}</strong><br>${fmtP(importe)} &middot; ${clientes} cliente(s)`,
+          { sticky: true }
+        );
+        layer.on('mouseover', () => layer.setStyle({ weight: 2, color: '#1a3a5c' }));
+        layer.on('mouseout', () => capaEstados.resetStyle(layer));
+        layer.on('click', () => verMunicipios(feat.properties.id, feat.properties.name));
+      }
+    }).addTo(mapaLeaflet);
+
+    try { mapaLeaflet.fitBounds(capaEstados.getBounds()); } catch (e) {}
+  }
+
+  async function verMunicipios(id, nombre) {
+    if (!datosMapa) return;
+    estadoActual = id;
+    document.getElementById('mapaTitulo').textContent = nombre;
+    document.getElementById('btnVolverMexico').style.display = 'inline-block';
+
+    if (capaEstados) { mapaLeaflet.removeLayer(capaEstados); capaEstados = null; }
+    if (capaMunicipios) { mapaLeaflet.removeLayer(capaMunicipios); capaMunicipios = null; }
+
+    if (!municipiosCache[id]) {
+      try {
+        municipiosCache[id] = await fetch(`/static/vendor/geo/municipios/${id}.json`).then(r => r.json());
+      } catch (e) {
+        document.getElementById('mapaNota').textContent = 'No se pudo cargar el detalle de municipios.';
+        return;
+      }
+    }
+    const geo = municipiosCache[id];
+    const lista = (datosMapa.por_municipio[id] || []);
+    const porNombre = {};
+    lista.forEach(m => porNombre[m.nombre] = m);
+    const max = Math.max(0, ...lista.map(m => m.importe));
+    document.getElementById('leyendaMax').textContent = fmtP(max);
+    actualizarNota(id);
+
+    capaMunicipios = L.geoJSON(geo, {
+      style: feat => ({
+        fillColor: colorEscala((porNombre[feat.properties.NAME_2] || {}).importe || 0, max),
+        weight: 1, color: '#fff', fillOpacity: .88,
+      }),
+      onEachFeature: (feat, layer) => {
+        const info = porNombre[feat.properties.NAME_2];
+        const importe = info ? info.importe : 0;
+        const clientes = info ? info.num_clientes : 0;
+        layer.bindTooltip(
+          `<strong>${escH(feat.properties.NAME_2)}</strong><br>${fmtP(importe)} &middot; ${clientes} cliente(s)`,
+          { sticky: true }
+        );
+        layer.on('mouseover', () => layer.setStyle({ weight: 2, color: '#1a3a5c' }));
+        layer.on('mouseout', () => capaMunicipios.resetStyle(layer));
+      }
+    }).addTo(mapaLeaflet);
+
+    try { mapaLeaflet.fitBounds(capaMunicipios.getBounds()); } catch (e) {}
+  }
+
+  function volverAMexico(silencioso) {
+    estadoActual = null;
+    document.getElementById('mapaTitulo').textContent = 'México';
+    document.getElementById('btnVolverMexico').style.display = 'none';
+    if (capaMunicipios && mapaLeaflet) { mapaLeaflet.removeLayer(capaMunicipios); capaMunicipios = null; }
+    if (!silencioso) redibujarEstados();
+  }
+
+  function actualizarNota(estadoId) {
+    const nota = document.getElementById('mapaNota');
+    if (!datosMapa) { nota.textContent = ''; return; }
+    if (estadoId) {
+      const lista = datosMapa.por_municipio[estadoId] || [];
+      const sinId = lista.find(m => m.nombre === 'No identificado');
+      nota.textContent = sinId
+        ? `${fmtP(sinId.importe)} sin municipio identificado en este estado (${sinId.num_ventas} venta(s)).`
+        : '';
+      return;
+    }
+    const si = datosMapa.sin_identificar;
+    nota.textContent = (si && si.importe > 0)
+      ? `${fmtP(si.importe)} sin estado identificado (${si.num_ventas} venta(s), revisa el domicilio del cliente en Aspel).`
+      : '';
   }
 
   function renderTodo(resumen, porMes, mostrarMensual) {

@@ -163,14 +163,19 @@ def mapa():
             SELECT
                 c.ESTADO,
                 c.MUNICIPIO,
+                p.CVE_ART,
+                COALESCE(i.DESCR, p.DESCR_ART) AS DESCR,
+                p.TIPO_PROD,
+                SUM(p.CANT) AS CANTIDAD,
                 SUM(p.TOT_PARTIDA) AS IMPORTE,
                 COUNT(DISTINCT f.CVE_DOC) AS NUM_VENTAS,
                 COUNT(DISTINCT c.CLAVE) AS NUM_CLIENTES
             FROM PAR_FACTF01 p
             JOIN FACTF01 f ON f.CVE_DOC = p.CVE_DOC
             JOIN CLIE01 c ON c.CLAVE = f.CVE_CLPV
+            LEFT JOIN INVE01 i ON i.CVE_ART = p.CVE_ART
             WHERE {where_sql}
-            GROUP BY c.ESTADO, c.MUNICIPIO
+            GROUP BY c.ESTADO, c.MUNICIPIO, p.CVE_ART, COALESCE(i.DESCR, p.DESCR_ART), p.TIPO_PROD
         """, params, empresa_id=empresa)
 
         por_estado = {}
@@ -178,14 +183,25 @@ def mapa():
         sin_identificar = {"importe": 0.0, "num_ventas": 0, "num_clientes": 0}
 
         def _nuevo_bucket(nombre):
-            return {"nombre": nombre, "importe": 0.0, "num_ventas": 0, "num_clientes": 0}
+            return {"nombre": nombre, "importe": 0.0, "num_ventas": 0, "num_clientes": 0, "productos": {}}
 
         def _acumular(bucket, importe, num_ventas, num_clientes):
             bucket["importe"] += importe
             bucket["num_ventas"] += num_ventas
             bucket["num_clientes"] += num_clientes
 
-        for estado_txt, municipio_txt, importe, num_ventas, num_clientes in rows:
+        def _acumular_producto(bucket, cve_art, descr, tipo_prod, cantidad, importe, num_ventas):
+            prod = bucket["productos"].setdefault(cve_art, {
+                "cve_art": cve_art, "descr": descr or "",
+                "tipo": _TIPOS_VALIDOS.get(tipo_prod, tipo_prod or "?"),
+                "cantidad": 0.0, "importe": 0.0, "num_ventas": 0,
+            })
+            prod["cantidad"] += cantidad
+            prod["importe"] += importe
+            prod["num_ventas"] += num_ventas
+
+        for estado_txt, municipio_txt, cve_art, descr, tipo_prod, cantidad, importe, num_ventas, num_clientes in rows:
+            cantidad = float(cantidad or 0)
             importe = float(importe or 0)
             num_ventas = int(num_ventas or 0)
             num_clientes = int(num_clientes or 0)
@@ -198,11 +214,25 @@ def mapa():
             eid = estado["id"]
             bucket_e = por_estado.setdefault(eid, {"id": eid, **_nuevo_bucket(estado["nombre"])})
             _acumular(bucket_e, importe, num_ventas, num_clientes)
+            _acumular_producto(bucket_e, cve_art, descr, tipo_prod, cantidad, importe, num_ventas)
 
             municipio = geo_mx.normalizar_municipio(eid, municipio_txt) if municipio_txt else None
             nombre_mun = municipio or "No identificado"
             bucket_m = por_municipio.setdefault(eid, {}).setdefault(nombre_mun, _nuevo_bucket(nombre_mun))
             _acumular(bucket_m, importe, num_ventas, num_clientes)
+            _acumular_producto(bucket_m, cve_art, descr, tipo_prod, cantidad, importe, num_ventas)
+
+        def _finalizar(bucket, top=10):
+            bucket["productos"] = sorted(
+                bucket["productos"].values(), key=lambda p: p["importe"], reverse=True
+            )[:top]
+            return bucket
+
+        for b in por_estado.values():
+            _finalizar(b)
+        for muns in por_municipio.values():
+            for b in muns.values():
+                _finalizar(b)
 
         return jsonify({
             "ok": True,

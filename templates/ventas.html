@@ -184,6 +184,13 @@
         <div class="mapa-nota" id="mapaNota"></div>
       </div>
     </div>
+
+    <div class="card" id="cardProductosMapa" style="display:none">
+      <div class="card-hdr">
+        <span id="productosMapaTitulo">Mas vendidos</span>
+      </div>
+      <div class="table-scroll" id="productosMapaTabla"></div>
+    </div>
   </div>
 
 </div>
@@ -352,6 +359,7 @@
     }).addTo(mapaLeaflet);
 
     try { mapaLeaflet.fitBounds(capaEstados.getBounds()); } catch (e) {}
+    ocultarProductosMapa();
   }
 
   async function verMunicipios(id, nombre) {
@@ -394,10 +402,14 @@
         );
         layer.on('mouseover', () => layer.setStyle({ weight: 2, color: '#1a3a5c' }));
         layer.on('mouseout', () => capaMunicipios.resetStyle(layer));
+        layer.on('click', () => mostrarProductosMapa(feat.properties.NAME_2, info));
       }
     }).addTo(mapaLeaflet);
 
     try { mapaLeaflet.fitBounds(capaMunicipios.getBounds()); } catch (e) {}
+
+    const infoEstado = datosMapa.por_estado.find(e => e.id === id);
+    mostrarProductosMapa(nombre, infoEstado);
   }
 
   function volverAMexico(silencioso) {
@@ -406,6 +418,41 @@
     document.getElementById('btnVolverMexico').style.display = 'none';
     if (capaMunicipios && mapaLeaflet) { mapaLeaflet.removeLayer(capaMunicipios); capaMunicipios = null; }
     if (!silencioso) redibujarEstados();
+    ocultarProductosMapa();
+  }
+
+  function ocultarProductosMapa() {
+    document.getElementById('cardProductosMapa').style.display = 'none';
+  }
+
+  function mostrarProductosMapa(nombre, info) {
+    const card = document.getElementById('cardProductosMapa');
+    const productos = info ? info.productos : [];
+    if (!productos || !productos.length) {
+      document.getElementById('productosMapaTitulo').textContent = `Sin ventas en ${nombre}`;
+      document.getElementById('productosMapaTabla').innerHTML = '<div class="empty">Sin datos.</div>';
+      card.style.display = 'block';
+      return;
+    }
+    document.getElementById('productosMapaTitulo').textContent =
+      `Mas vendidos en ${nombre} (top ${productos.length})`;
+    let html = `<table><thead><tr>
+      <th>Clave</th><th>Descripcion</th><th>Tipo</th>
+      <th class="num">Cantidad</th><th class="num">Importe</th><th class="num">Ventas</th>
+    </tr></thead><tbody>`;
+    productos.forEach(p => {
+      html += `<tr>
+        <td><strong>${escH(p.cve_art)}</strong></td>
+        <td>${escH(p.descr)}</td>
+        <td><span class="tipo-badge tipo-${p.tipo}">${p.tipo}</span></td>
+        <td class="num">${fmt(p.cantidad)}</td>
+        <td class="num">${fmtP(p.importe)}</td>
+        <td class="num">${p.num_ventas}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('productosMapaTabla').innerHTML = html;
+    card.style.display = 'block';
   }
 
   function actualizarNota(estadoId) {

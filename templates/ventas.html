@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ventas - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 1100px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr {
+      background: #f7f9fc; border-bottom: 1px solid #e0e4ea;
+      padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    }
+    .card-body { padding: 18px; }
+
+    .filtros {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: end;
+    }
+    .fg { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+    .fg label { font-size: .78rem; font-weight: 600; color: #555; }
+    .fg select, .fg input {
+      padding: 7px 10px; border: 1px solid #cdd1d9; border-radius: 6px; font-size: .87rem;
+    }
+    #empresa-wrap { display: none; }
+
+    .btn {
+      padding: 7px 16px; border: none; border-radius: 6px;
+      font-size: .83rem; font-weight: 600; cursor: pointer; background: #1a3a5c; color: #fff;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-outline {
+      background: transparent; color: #1a3a5c; border: 1px solid #1a3a5c;
+      font-size: .78rem; padding: 5px 11px;
+    }
+    .btn-outline.active { background: #1a3a5c; color: #fff; }
+    .btn-excel { background: #1e7e34; }
+    .btn-pdf   { background: #b02020; }
+    .btn-sm { padding: 5px 12px; font-size: .78rem; }
+
+    .resumen { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    @media (max-width: 640px) { .resumen { grid-template-columns: 1fr; } }
+    .stat { background: #f7f9fc; border-radius: 8px; padding: 14px 16px; text-align: center; }
+    .stat .num { font-size: 1.4rem; font-weight: 700; color: #1a3a5c; }
+    .stat .lbl { font-size: .78rem; color: #777; margin-top: 2px; }
+
+    .chart-wrap { position: relative; height: 320px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; cursor: pointer; white-space: nowrap; }
+    th.num, td.num { text-align: right; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; }
+    tr:hover td { background: #f9fbff; }
+    .tipo-badge {
+      display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .72rem; font-weight: 600;
+    }
+    .tipo-Producto { background: #eef2f7; color: #1a3a5c; }
+    .tipo-Servicio { background: #fff3d6; color: #8a6200; }
+    .tipo-Kit      { background: #eafaf1; color: #1e8449; }
+
+    .empty { text-align: center; color: #999; padding: 40px; font-size: .9rem; }
+    .error-msg { text-align: center; color: #b02020; padding: 40px; font-size: .9rem; }
+
+    .table-scroll { overflow-x: auto; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Ventas &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/">Inventario</a>
+    {% if es_admin %}
+    <a href="/admin/database">Base de datos</a>
+    <a href="/admin/whatsapp">WhatsApp</a>
+    <a href="/admin/usuarios">Cuentas</a>
+    {% endif %}
+  </div>
+</header>
+
+<div class="page">
+
+  <div class="card">
+    <div class="card-body">
+      <div class="filtros">
+        <div class="fg" id="empresa-wrap">
+          <label>Empresa</label>
+          <select id="empresa" onchange="cargarAnios()"></select>
+        </div>
+        <div class="fg">
+          <label>Ano</label>
+          <select id="anio" onchange="cargar()"></select>
+        </div>
+        <div class="fg">
+          <label>Mes</label>
+          <select id="mes" onchange="cargar()">
+            <option value="">Todo el ano</option>
+            <option value="1">Enero</option>
+            <option value="2">Febrero</option>
+            <option value="3">Marzo</option>
+            <option value="4">Abril</option>
+            <option value="5">Mayo</option>
+            <option value="6">Junio</option>
+            <option value="7">Julio</option>
+            <option value="8">Agosto</option>
+            <option value="9">Septiembre</option>
+            <option value="10">Octubre</option>
+            <option value="11">Noviembre</option>
+            <option value="12">Diciembre</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Tipo</label>
+          <select id="tipo" onchange="cargar()">
+            <option value="">Todos</option>
+            <option value="P">Productos</option>
+            <option value="S">Servicios</option>
+            <option value="K">Kits</option>
+          </select>
+        </div>
+        <button class="btn" onclick="cargar()">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="contenedor">
+    <div class="empty">Cargando...</div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script>
+  const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  let filas = [];
+  let sortCol = 'importe', sortDir = -1;
+  let modoChart = 'importe';
+  let chartTop = null, chartMes = null;
+
+  const fmt  = v => Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtP = v => '$' + fmt(v);
+  const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  function empresaActual() {
+    const sel = document.getElementById('empresa');
+    return sel ? sel.value : '';
+  }
+
+  fetch('/api/empresas').then(r => r.json()).then(er => {
+    const sel = document.getElementById('empresa');
+    if (er.ok && er.data.length > 1) {
+      sel.innerHTML = er.data.map(e => `<option value="${e.id}">${escH(e.nombre)}</option>`).join('');
+      sel.value = er.default;
+      document.getElementById('empresa-wrap').style.display = 'flex';
+    }
+    cargarAnios();
+  }).catch(cargarAnios);
+
+  async function cargarAnios() {
+    const sel = document.getElementById('anio');
+    try {
+      const qs = empresaActual() ? ('?empresa=' + empresaActual()) : '';
+      const r = await fetch('/api/ventas/anios' + qs).then(r => r.json());
+      const anioActual = new Date().getFullYear();
+      let anios = (r.ok && r.data.length) ? r.data : [anioActual];
+      if (!anios.includes(anioActual)) anios = [anioActual, ...anios];
+      sel.innerHTML = anios.map(a => `<option value="${a}">${a}</option>`).join('');
+      cargar();
+    } catch (e) {
+      sel.innerHTML = `<option value="${new Date().getFullYear()}">${new Date().getFullYear()}</option>`;
+      cargar();
+    }
+  }
+
+  async function cargar() {
+    const anio    = document.getElementById('anio').value;
+    const mes     = document.getElementById('mes').value;
+    const tipo    = document.getElementById('tipo').value;
+    const empresa = empresaActual();
+
+    document.getElementById('contenedor').innerHTML = '<div class="empty">Consultando...</div>';
+
+    try {
+      const p = new URLSearchParams({ anio, mes, tipo });
+      if (empresa) p.set('empresa', empresa);
+      const res = await fetch('/api/ventas?' + p).then(r => r.json());
+      if (!res.ok) {
+        document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
+        return;
+      }
+      filas = res.data;
+      renderTodo(res.resumen, res.por_mes, !mes);
+    } catch (e) {
+      document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+    }
+  }
+
+  function renderTodo(resumen, porMes, mostrarMensual) {
+    const cont = document.getElementById('contenedor');
+
+    if (!filas.length) {
+      cont.innerHTML = '<div class="card"><div class="empty">Sin ventas en el periodo seleccionado.</div></div>';
+      return;
+    }
+
+    cont.innerHTML = `
+      <div class="card">
+        <div class="card-body">
+          <div class="resumen">
+            <div class="stat"><div class="num">${fmtP(resumen.importe_total)}</div><div class="lbl">Total vendido</div></div>
+            <div class="stat"><div class="num">${fmt(resumen.cantidad_total)}</div><div class="lbl">Unidades / servicios vendidos</div></div>
+            <div class="stat"><div class="num">${resumen.num_productos}</div><div class="lbl">Productos/servicios distintos</div></div>
+          </div>
+        </div>
+      </div>
+
+      ${mostrarMensual ? `
+      <div class="card">
+        <div class="card-hdr">Ventas por mes</div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="chartMes"></canvas></div></div>
+      </div>` : ''}
+
+      <div class="card">
+        <div class="card-hdr">
+          Mas vendidos
+          <div>
+            <button class="btn-outline btn-sm ${modoChart==='importe'?'active':''}" onclick="cambiarModoChart('importe', this)">Por importe</button>
+            <button class="btn-outline btn-sm ${modoChart==='cantidad'?'active':''}" onclick="cambiarModoChart('cantidad', this)">Por cantidad</button>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-wrap"><canvas id="chartTop"></canvas></div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-hdr">
+          Detalle (${filas.length})
+          <div>
+            <button class="btn btn-excel btn-sm" onclick="exportarExcel()">Excel</button>
+            <button class="btn btn-pdf btn-sm" onclick="exportarPDF()">PDF</button>
+          </div>
+        </div>
+        <div class="table-scroll">${tablaHtml()}</div>
+      </div>
+    `;
+
+    dibujarChartTop();
+    if (mostrarMensual) dibujarChartMes(porMes);
+  }
+
+  function tablaHtml() {
+    const ordenadas = [...filas].sort((a, b) => {
+      const va = a[sortCol], vb = b[sortCol];
+      if (typeof va === 'string') return va.localeCompare(vb) * sortDir;
+      return (va - vb) * sortDir;
+    });
+    let html = `<table><thead><tr>
+      <th onclick="ordenar('cve_art')">Clave</th>
+      <th onclick="ordenar('descr')">Descripcion</th>
+      <th onclick="ordenar('lin_prod')">Linea</th>
+      <th onclick="ordenar('tipo')">Tipo</th>
+      <th class="num" onclick="ordenar('cantidad')">Cantidad</th>
+      <th class="num" onclick="ordenar('importe')">Importe</th>
+      <th class="num" onclick="ordenar('num_ventas')">Ventas</th>
+    </tr></thead><tbody>`;
+    ordenadas.forEach(r => {
+      html += `<tr>
+        <td><strong>${escH(r.cve_art)}</strong></td>
+        <td>${escH(r.descr)}</td>
+        <td>${escH(r.lin_prod)}</td>
+        <td><span class="tipo-badge tipo-${r.tipo}">${r.tipo}</span></td>
+        <td class="num">${fmt(r.cantidad)}</td>
+        <td class="num">${fmtP(r.importe)}</td>
+        <td class="num">${r.num_ventas}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function ordenar(col) {
+    sortDir = (sortCol === col) ? -sortDir : -1;
+    sortCol = col;
+    document.querySelector('.table-scroll').innerHTML = tablaHtml();
+  }
+
+  function cambiarModoChart(modo, btn) {
+    modoChart = modo;
+    document.querySelectorAll('.card-hdr .btn-outline').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    dibujarChartTop();
+  }
+
+  function dibujarChartTop() {
+    const top = [...filas].sort((a, b) => b[modoChart] - a[modoChart]).slice(0, 15);
+    const ctx = document.getElementById('chartTop');
+    if (!ctx) return;
+    if (chartTop) chartTop.destroy();
+    chartTop = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: top.map(r => r.cve_art),
+        datasets: [{
+          label: modoChart === 'importe' ? 'Importe ($)' : 'Cantidad',
+          data: top.map(r => r[modoChart]),
+          backgroundColor: '#1a3a5c',
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              afterTitle: (items) => {
+                const r = top[items[0].dataIndex];
+                return r.descr;
+              }
+            }
+          }
+        },
+        scales: { x: { beginAtZero: true } }
+      }
+    });
+  }
+
+  function dibujarChartMes(porMes) {
+    const ctx = document.getElementById('chartMes');
+    if (!ctx) return;
+    if (chartMes) chartMes.destroy();
+    chartMes = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: MESES,
+        datasets: [{ label: 'Ventas ($)', data: porMes, backgroundColor: '#245080' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+
+  // ── Exportar ──────────────────────────────────────────────────
+  function datosExport() {
+    const cabeceras = ['Clave', 'Descripcion', 'Linea', 'Tipo', 'Cantidad', 'Importe', 'Ventas'];
+    const cuerpo = [...filas].sort((a, b) => b.importe - a.importe).map(r => [
+      r.cve_art, r.descr, r.lin_prod, r.tipo, r.cantidad, r.importe, r.num_ventas
+    ]);
+    return { cabeceras, cuerpo };
+  }
+
+  function nombreArchivo(ext) {
+    const anio = document.getElementById('anio').value;
+    const mes  = document.getElementById('mes').value;
+    return `ventas_${anio}${mes ? '_' + mes : ''}.${ext}`;
+  }
+
+  function exportarExcel() {
+    if (typeof XLSX === 'undefined') { alert('Libreria cargando, reintenta.'); return; }
+    const { cabeceras, cuerpo } = datosExport();
+    const hoja = XLSX.utils.aoa_to_sheet([cabeceras, ...cuerpo]);
+    hoja['!cols'] = [{wch:16},{wch:42},{wch:14},{wch:10},{wch:12},{wch:14},{wch:10}];
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, 'Ventas');
+    XLSX.writeFile(libro, nombreArchivo('xlsx'));
+  }
+
+  function exportarPDF() {
+    if (typeof window.jspdf === 'undefined') { alert('Libreria cargando, reintenta.'); return; }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' });
+    const { cabeceras, cuerpo } = datosExport();
+    doc.setFontSize(13); doc.setTextColor(26,58,92);
+    doc.text('Reporte de Ventas - Aspel SAE', 14, 14);
+    doc.autoTable({
+      head: [cabeceras], body: cuerpo, startY: 20,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [26,58,92], textColor: 255 },
+    });
+    doc.save(nombreArchivo('pdf'));
+  }
+</script>
+
+</body>
+</html>

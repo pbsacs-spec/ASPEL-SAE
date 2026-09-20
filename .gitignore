@@ -1,0 +1,18 @@
+# Secretos y configuracion local (contienen contrasenas/tokens o son especificos de este equipo)
+auth_config.ini
+db_config.ini
+wa_config.ini
+
+# Sesion de WhatsApp (credenciales del dispositivo vinculado)
+wa_service/wa_session/
+wa_service/.wwebjs_cache/
+
+# Dependencias (se reinstalan con npm install)
+wa_service/node_modules/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc

@@ -1,0 +1,195 @@
+from flask import Flask, render_template, request, jsonify, g
+
+from db import query, get_almacenes, load_empresas
+from whatsapp import wa_bp
+from db_admin import db_admin_bp
+from auth import require_dashboard
+
+app = Flask(__name__)
+app.secret_key = "aspel_sae_secret_2024"
+app.register_blueprint(wa_bp)
+app.register_blueprint(db_admin_bp)
+
+
+@app.after_request
+def _sin_cache(resp):
+    """Evita que el navegador reuse una version cacheada entre roles/permisos."""
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/")
+@require_dashboard
+def index():
+    return render_template(
+        "index.html",
+        sin_costo=(g.role == "vendedores"),
+        es_admin=(g.role == "admin"),
+    )
+
+
+@app.route("/api/empresas")
+@require_dashboard
+def empresas_lista():
+    try:
+        empresas, settings = load_empresas()
+        data = [
+            {"id": eid, "nombre": emp["nombre"], "default": eid == settings["default"]}
+            for eid, emp in empresas.items()
+        ]
+        return jsonify({"ok": True, "data": data, "default": settings["default"]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/productos")
+@require_dashboard
+def productos():
+    return _consultar_productos(incluir_costo=(g.role != "vendedores"))
+
+
+def _consultar_productos(incluir_costo):
+    buscar    = request.args.get("q", "").strip()
+    linea     = request.args.get("linea", "").strip()
+    almacen   = request.args.get("almacen", "").strip()
+    cve_desde = request.args.get("cve_desde", "").strip().upper()
+    cve_hasta = request.args.get("cve_hasta", "").strip().upper()
+    solo_con  = request.args.get("solo_con", "0")
+    empresa   = request.args.get("empresa", "").strip() or None
+
+    # Validar empresa_id
+    if empresa:
+        empresas, _ = load_empresas()
+        if empresa not in empresas:
+            empresa = None
+
+    alm_filtro = None
+    if almacen:
+        try:
+            alm_filtro = int(almacen)
+        except ValueError:
+            return jsonify({"ok": False, "error": "Almacen invalido"}), 400
+
+    where_parts = ["1=1"]
+    params = []
+
+    if buscar:
+        where_parts.append(
+            "(UPPER(i.CVE_ART) CONTAINING UPPER(?) OR UPPER(i.DESCR) CONTAINING UPPER(?))"
+        )
+        params += [buscar, buscar]
+    if linea:
+        where_parts.append("i.LIN_PROD = ?")
+        params.append(linea)
+    if cve_desde:
+        where_parts.append("i.CVE_ART >= ?")
+        params.append(cve_desde)
+    if cve_hasta:
+        where_parts.append("i.CVE_ART <= ?")
+        params.append(cve_hasta)
+    if alm_filtro is not None:
+        where_parts.append(f"""
+            COALESCE((
+                SELECT m.EXISTENCIA FROM MINVE01 m
+                WHERE m.CVE_ART = i.CVE_ART AND m.ALMACEN = {alm_filtro}
+                  AND m.NUM_MOV = (
+                      SELECT MAX(m2.NUM_MOV) FROM MINVE01 m2
+                      WHERE m2.CVE_ART = m.CVE_ART AND m2.ALMACEN = m.ALMACEN
+                  )
+            ), 0) > 0
+        """)
+    elif solo_con == "1":
+        where_parts.append("i.EXIST > 0")
+
+    where = " AND ".join(where_parts)
+
+    sql = f"""
+        SELECT FIRST 500
+            i.CVE_ART,
+            i.DESCR,
+            i.LIN_PROD,
+            i.UNI_MED,
+            i.EXIST     AS EXIST_TOTAL,
+            i.STOCK_MIN,
+            i.COSTO_PROM,
+            i.ULT_COSTO,
+            MAX(CASE WHEN p.CVE_PRECIO = 1 THEN p.PRECIO END) AS PREC1,
+            MAX(CASE WHEN p.CVE_PRECIO = 2 THEN p.PRECIO END) AS PREC2,
+            MAX(CASE WHEN p.CVE_PRECIO = 3 THEN p.PRECIO END) AS PREC3,
+            i.STATUS
+        FROM INVE01 i
+        LEFT JOIN PRECIO_X_PROD01 p ON p.CVE_ART = i.CVE_ART
+        WHERE {where}
+        GROUP BY
+            i.CVE_ART, i.DESCR, i.LIN_PROD, i.UNI_MED,
+            i.EXIST, i.STOCK_MIN, i.COSTO_PROM, i.ULT_COSTO, i.STATUS
+        ORDER BY i.CVE_ART
+    """
+
+    try:
+        almacenes = get_almacenes(empresa_id=empresa)
+        cols, rows = query(sql, params, empresa_id=empresa)
+        data = [dict(zip(cols, r)) for r in rows]
+
+        if data:
+            claves = [r["CVE_ART"] for r in data]
+            ph = ",".join(["?"] * len(claves))
+            _, exist_rows = query(f"""
+                SELECT m.CVE_ART, m.ALMACEN, m.EXISTENCIA
+                FROM MINVE01 m
+                WHERE m.CVE_ART IN ({ph})
+                  AND m.NUM_MOV = (
+                      SELECT MAX(m2.NUM_MOV) FROM MINVE01 m2
+                      WHERE m2.CVE_ART = m.CVE_ART AND m2.ALMACEN = m.ALMACEN
+                  )
+            """, claves, empresa_id=empresa)
+
+            exist_map = {}
+            for cve_art, cve_alm, existencia in exist_rows:
+                exist_map.setdefault(cve_art, {})[cve_alm] = float(existencia or 0)
+
+            for row in data:
+                cve = row["CVE_ART"]
+                for alm in almacenes:
+                    row[f"ALM_{alm['cve']}"] = exist_map.get(cve, {}).get(alm["cve"], 0.0)
+                exist     = float(row.get("EXIST_TOTAL") or 0)
+                stock_min = float(row.get("STOCK_MIN") or 0)
+                row["BAJO_STOCK"] = stock_min > 0 and exist <= stock_min
+
+        if not incluir_costo:
+            for row in data:
+                row.pop("COSTO_PROM", None)
+                row.pop("ULT_COSTO", None)
+
+        return jsonify({"ok": True, "data": data, "almacenes": almacenes})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/lineas")
+@require_dashboard
+def lineas():
+    empresa = request.args.get("empresa", "").strip() or None
+    try:
+        _, rows = query("""
+            SELECT DISTINCT LIN_PROD FROM INVE01
+            WHERE LIN_PROD IS NOT NULL AND LIN_PROD <> ''
+            ORDER BY LIN_PROD
+        """, empresa_id=empresa)
+        return jsonify({"ok": True, "data": [r[0] for r in rows]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/almacenes")
+@require_dashboard
+def almacenes_route():
+    empresa = request.args.get("empresa", "").strip() or None
+    try:
+        return jsonify({"ok": True, "data": get_almacenes(empresa_id=empresa)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)

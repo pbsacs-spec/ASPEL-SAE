@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Base de Datos - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 860px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr {
+      background: #f7f9fc; border-bottom: 1px solid #e0e4ea;
+      padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .card-body { padding: 20px; }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 12px; border-radius: 20px; font-size: .78rem; font-weight: 600;
+    }
+    .status-ok   { background: #eafaf1; color: #1e8449; }
+    .status-err  { background: #fdecea; color: #922b21; }
+    .status-load { background: #f0f0f0; color: #888; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+    .flash { padding: 10px 16px; border-radius: 8px; font-size: .87rem; margin-bottom: 4px; }
+    .flash.ok  { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    .flash.err { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+
+    /* Tabla de empresas */
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fbff; }
+
+    .emp-nombre { font-weight: 600; color: #1a3a5c; }
+    .emp-path   { font-family: Consolas, monospace; font-size: .78rem; color: #555; word-break: break-all; }
+    .emp-num    { color: #aaa; font-size: .8rem; min-width: 24px; }
+    .badge-default {
+      display: inline-block; background: #1a3a5c; color: #fff;
+      padding: 2px 9px; border-radius: 10px; font-size: .72rem; margin-left: 6px;
+    }
+
+    .acciones { display: flex; gap: 6px; white-space: nowrap; }
+
+    label { display: block; font-size: .85rem; font-weight: 600; color: #333; margin-bottom: 5px; }
+    .hint { font-size: .78rem; color: #888; font-weight: 400; margin-top: 2px; }
+    input[type=text], input[type=hidden] {
+      width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px;
+      font-size: .88rem; color: #222; transition: border .2s;
+    }
+    input[type=text]:focus { outline: none; border-color: #1a3a5c; }
+    .field { margin-bottom: 16px; }
+
+    .btn {
+      padding: 7px 16px; border: none; border-radius: 7px;
+      font-size: .83rem; font-weight: 600; cursor: pointer; transition: opacity .15s;
+      text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+    }
+    .btn:hover { opacity: .82; }
+    .btn-primary   { background: #1a3a5c; color: #fff; }
+    .btn-secondary { background: #e8ecf0; color: #333; }
+    .btn-test      { background: #0e7a3c; color: #fff; }
+    .btn-danger    { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+    .btn-sm        { padding: 5px 11px; font-size: .78rem; }
+    .btn:disabled  { opacity: .45; cursor: not-allowed; }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+
+    #test-result {
+      margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+      font-size: .85rem; display: none;
+    }
+    #test-result.ok  { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    #test-result.err { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+
+    /* Form panel para agregar/editar */
+    #form-panel {
+      display: none; border-top: 1px solid #e0e4ea; padding: 20px;
+    }
+    #form-panel.visible { display: block; }
+    #form-titulo { font-weight: 600; color: #1a3a5c; margin-bottom: 14px; font-size: .93rem; }
+
+    .note {
+      font-size: .8rem; color: #777; background: #fffbea;
+      border: 1px solid #ffe58f; border-radius: 7px; padding: 9px 13px; margin-top: 12px;
+    }
+    .divider { border: none; border-top: 1px solid #e0e4ea; margin: 0; }
+    .empty-row td { text-align: center; color: #aaa; padding: 24px; font-size: .85rem; }
+
+    .numero-col { text-align: center; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Base de Datos &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/">Inventario</a>
+    <a href="/admin/whatsapp">WhatsApp</a>
+    <a href="/admin/usuarios">Cuentas</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in msgs %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- Tabla de empresas -->
+  <div class="card">
+    <div class="card-hdr">
+      Empresas registradas
+      <button class="btn btn-primary btn-sm" onclick="mostrarFormNuevo()">+ Agregar empresa</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="numero-col">#</th>
+          <th>Nombre</th>
+          <th>Ruta de base de datos</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set emp_list = empresas.items() | list %}
+        {% if not emp_list %}
+          <tr class="empty-row"><td colspan="5">No hay empresas registradas.</td></tr>
+        {% endif %}
+        {% for eid, emp in emp_list %}
+        {% set idx = loop.index %}
+        <tr>
+          <td class="numero-col emp-num">{{ idx }}</td>
+          <td>
+            <span class="emp-nombre">{{ emp.nombre }}</span>
+            {% if eid == settings.default %}
+              <span class="badge-default">predeterminada</span>
+            {% endif %}
+          </td>
+          <td><span class="emp-path">{{ emp.db_path }}</span></td>
+          <td>
+            <span class="status-badge status-load" id="estado-{{ eid }}">
+              <span class="dot"></span> Verificando...
+            </span>
+          </td>
+          <td>
+            <div class="acciones">
+              <button class="btn btn-secondary btn-sm"
+                onclick='mostrarFormEditar("{{ eid }}", {{ emp.nombre | tojson }}, {{ emp.db_path | tojson }})'>
+                Editar
+              </button>
+              {% if eid != settings.default %}
+              <form method="POST" action="/admin/database/predeterminar" style="display:inline">
+                <input type="hidden" name="empresa_id" value="{{ eid }}">
+                <button type="submit" class="btn btn-secondary btn-sm">Predeterminar</button>
+              </form>
+              <form method="POST" action="/admin/database/eliminar" style="display:inline"
+                    onsubmit="return confirm('¿Eliminar la empresa «{{ emp.nombre }}»?')">
+                <input type="hidden" name="empresa_id" value="{{ eid }}">
+                <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <hr class="divider">
+
+    <!-- Formulario agregar / editar -->
+    <div id="form-panel">
+      <div id="form-titulo">Nueva empresa</div>
+      <form method="POST" action="/admin/database/guardar" id="form-empresa">
+        <input type="hidden" name="empresa_id" id="f-empresa-id" value="">
+
+        <div class="field">
+          <label>Nombre de la empresa</label>
+          <input type="text" name="nombre" id="f-nombre" placeholder="Ej: Empresa Norte">
+        </div>
+
+        <div class="field">
+          <label>Ruta de la base de datos (.FDB)</label>
+          <input type="text" name="db_path" id="f-db-path"
+                 placeholder="D:\Ruta\SAE90EMPRE01.FDB">
+          <div class="hint">Ruta completa al archivo .FDB de Aspel SAE</div>
+        </div>
+
+        <div id="test-result"></div>
+
+        <div class="btn-row">
+          <button type="button" class="btn btn-test" id="btn-test">Probar conexion</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+          <button type="button" class="btn btn-secondary" onclick="ocultarForm()">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Configuracion global Firebird -->
+  <div class="card">
+    <div class="card-hdr">Configuracion global de Firebird</div>
+    <div class="card-body">
+      <form method="POST" action="/admin/database/fb_lib">
+        <div class="field">
+          <label>Ruta de Firebird (fbclient.dll)</label>
+          <input type="text" name="fb_lib" value="{{ settings.fb_lib }}"
+                 placeholder="C:\Program Files\Firebird\Firebird_2_5\bin\fbclient.dll">
+          <div class="hint">Compartida por todas las empresas. Requiere reiniciar los servicios al cambiar.</div>
+        </div>
+        <div class="note">
+          <strong>Nota:</strong> Solo existe una instalacion de Firebird por equipo.
+          Esta ruta aplica para todas las empresas registradas.
+        </div>
+        <div class="btn-row" style="margin-top:14px;">
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Ayuda WhatsApp -->
+  <div class="card">
+    <div class="card-hdr">Uso en WhatsApp</div>
+    <div class="card-body" style="font-size:.85rem;color:#444;line-height:1.7;">
+      Con varias empresas registradas, el bot de WhatsApp acepta un numero al inicio del comando:<br>
+      <code style="background:#f4f4f4;padding:2px 6px;border-radius:4px;">sae 1 exist CLAVE</code>
+      &nbsp;&rarr; consulta la empresa 1 (predeterminada si solo hay una)<br>
+      <code style="background:#f4f4f4;padding:2px 6px;border-radius:4px;">sae 2 buscar laptop</code>
+      &nbsp;&rarr; consulta la empresa 2<br>
+      <code style="background:#f4f4f4;padding:2px 6px;border-radius:4px;">sae empresas</code>
+      &nbsp;&rarr; lista todas las empresas con sus numeros
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Verificar estado de cada empresa via AJAX
+  document.querySelectorAll('[id^="estado-"]').forEach(badge => {
+    const eid = badge.id.replace('estado-', '');
+    const row = badge.closest('tr');
+    const dbPath = row.querySelector('.emp-path').textContent.trim();
+
+    fetch('/admin/database/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ db_path: dbPath }),
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        badge.className = 'status-badge status-ok';
+        badge.innerHTML = '<span class="dot"></span> ' + data.mensaje;
+      } else {
+        badge.className = 'status-badge status-err';
+        badge.innerHTML = '<span class="dot"></span> Sin conexion';
+        badge.title = data.error;
+      }
+    }).catch(() => {
+      badge.className = 'status-badge status-err';
+      badge.innerHTML = '<span class="dot"></span> Error';
+    });
+  });
+
+  // Formulario agregar / editar
+  function mostrarFormNuevo() {
+    document.getElementById('form-titulo').textContent = 'Nueva empresa';
+    document.getElementById('f-empresa-id').value = '';
+    document.getElementById('f-nombre').value = '';
+    document.getElementById('f-db-path').value = '';
+    document.getElementById('test-result').style.display = 'none';
+    document.getElementById('form-panel').classList.add('visible');
+    document.getElementById('f-nombre').focus();
+  }
+
+  function mostrarFormEditar(eid, nombre, dbPath) {
+    document.getElementById('form-titulo').textContent = 'Editar empresa';
+    document.getElementById('f-empresa-id').value = eid;
+    document.getElementById('f-nombre').value = nombre;
+    document.getElementById('f-db-path').value = dbPath;
+    document.getElementById('test-result').style.display = 'none';
+    document.getElementById('form-panel').classList.add('visible');
+    document.getElementById('f-nombre').focus();
+  }
+
+  function ocultarForm() {
+    document.getElementById('form-panel').classList.remove('visible');
+  }
+
+  // Probar conexion
+  document.getElementById('btn-test').addEventListener('click', async () => {
+    const btn    = document.getElementById('btn-test');
+    const res    = document.getElementById('test-result');
+    const dbPath = document.getElementById('f-db-path').value.trim();
+
+    btn.disabled = true;
+    btn.textContent = 'Probando...';
+    res.style.display = 'none';
+
+    try {
+      const r = await fetch('/admin/database/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ db_path: dbPath }),
+      });
+      const data = await r.json();
+      res.style.display = 'block';
+      if (data.ok) {
+        res.className = 'ok';
+        res.textContent = 'Conexion exitosa: ' + data.mensaje;
+      } else {
+        res.className = 'err';
+        res.textContent = 'Error: ' + data.error;
+      }
+    } catch (e) {
+      res.style.display = 'block';
+      res.className = 'err';
+      res.textContent = 'Error de red: ' + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Probar conexion';
+    }
+  });
+</script>
+
+</body>
+</html>

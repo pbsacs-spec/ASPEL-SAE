@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cuentas - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 760px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr {
+      background: #f7f9fc; border-bottom: 1px solid #e0e4ea;
+      padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c;
+    }
+    .card-body { padding: 20px; }
+
+    .flash { padding: 10px 16px; border-radius: 8px; font-size: .87rem; margin-bottom: 4px; }
+    .flash.ok  { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    .flash.err { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fbff; }
+    .empty-row td { text-align: center; color: #aaa; padding: 24px; font-size: .85rem; }
+
+    .rol-badge {
+      display: inline-block; padding: 2px 10px; border-radius: 10px;
+      font-size: .74rem; font-weight: 600;
+    }
+    .rol-vendedores      { background: #eef2f7; color: #445; }
+    .rol-administradores { background: #fff3d6; color: #8a6200; }
+    .rol-admin           { background: #1a3a5c; color: #fff; }
+
+    label { display: block; font-size: .85rem; font-weight: 600; color: #333; margin-bottom: 5px; }
+    .hint { font-size: .78rem; color: #888; font-weight: 400; margin-top: 4px; }
+    input[type=text], input[type=password], select {
+      width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px;
+      font-size: .88rem; color: #222;
+    }
+    input:focus, select:focus { outline: none; border-color: #1a3a5c; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; align-items: end; }
+    @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
+
+    .btn {
+      padding: 8px 16px; border: none; border-radius: 7px;
+      font-size: .83rem; font-weight: 600; cursor: pointer;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: #1a3a5c; color: #fff; }
+    .btn-danger  { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+    .btn-sm      { padding: 5px 11px; font-size: .78rem; }
+
+    .note {
+      font-size: .8rem; color: #777; background: #fffbea;
+      border: 1px solid #ffe58f; border-radius: 7px; padding: 9px 13px; margin-top: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Cuentas &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/">Inventario</a>
+    <a href="/admin/database">Base de datos</a>
+    <a href="/admin/whatsapp">WhatsApp</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in msgs %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="card">
+    <div class="card-hdr">Cuentas existentes</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Rol</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not usuarios %}
+          <tr class="empty-row"><td colspan="3">No hay cuentas registradas.</td></tr>
+        {% endif %}
+        {% for username, datos in usuarios %}
+        <tr>
+          <td><strong>{{ username }}</strong></td>
+          <td><span class="rol-badge rol-{{ datos.role }}">{{ datos.role }}</span></td>
+          <td>
+            <form method="POST" action="/admin/usuarios/eliminar" style="display:inline"
+                  onsubmit="return confirm('¿Eliminar la cuenta «{{ username }}»?')">
+              <input type="hidden" name="username" value="{{ username }}">
+              <button type="submit" class="btn btn-danger btn-sm">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">Crear o actualizar cuenta</div>
+    <div class="card-body">
+      <form method="POST" action="/admin/usuarios/guardar">
+        <div class="form-grid">
+          <div>
+            <label>Usuario</label>
+            <input type="text" name="username" placeholder="Ej: juan" autocomplete="off" required>
+          </div>
+          <div>
+            <label>Contrasena</label>
+            <input type="password" name="password" placeholder="Minimo 6 caracteres" autocomplete="new-password" required>
+          </div>
+          <div>
+            <label>Rol</label>
+            <select name="role">
+              {% for r in roles %}
+                <option value="{{ r }}">{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:10px;">
+          <strong>vendedores</strong>: solo consulta, sin costo &nbsp;|&nbsp;
+          <strong>administradores</strong>: consulta con costo &nbsp;|&nbsp;
+          <strong>admin</strong>: acceso total (incluye esta pagina)
+        </div>
+        <div style="margin-top:16px;">
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+      <div class="note">
+        Si el usuario ya existe, esto reemplaza su contrasena y rol.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

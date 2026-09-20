@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Existencias - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222;
+           display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── Header ── */
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 11px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    header span { font-size: .78rem; opacity: .6; }
+    .nav-links { display: flex; gap: 16px; align-items: center; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    /* ── Buscador ── */
+    .searchbar {
+      background: #fff; padding: 9px 16px;
+      display: flex; gap: 8px; align-items: center;
+      border-bottom: 1px solid #dde1e7;
+      box-shadow: 0 1px 4px rgba(0,0,0,.06); flex-shrink: 0;
+    }
+    .searchbar input {
+      flex: 1; padding: 7px 12px;
+      border: 1px solid #ccc; border-radius: 6px; font-size: .9rem;
+    }
+    #empresa-wrap { display: none; }
+    #empresa-wrap select {
+      padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px;
+      font-size: .85rem; background: #fff; color: #1a3a5c; font-weight: 600;
+    }
+
+    /* ── Botones ── */
+    .btn { padding: 7px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: .85rem; font-weight: 500; }
+    .btn-primary   { background: #1a3a5c; color: #fff; }
+    .btn-primary:hover  { background: #245080; }
+    .btn-secondary { background: #6c757d; color: #fff; }
+    .btn-secondary:hover { background: #5a6268; }
+    .btn-outline {
+      background: transparent; color: #1a3a5c;
+      border: 1px solid #1a3a5c; font-size: .78rem; padding: 5px 11px;
+    }
+    .btn-outline:hover  { background: #e8f0fe; }
+    .btn-outline.active { background: #1a3a5c; color: #fff; }
+    .btn-excel { background: #1e7e34; color: #fff; }
+    .btn-excel:hover:not(:disabled) { background: #155724; }
+    .btn-pdf   { background: #b02020; color: #fff; }
+    .btn-pdf:hover:not(:disabled)   { background: #881818; }
+    .btn[disabled] { opacity: .4; cursor: not-allowed; }
+
+    /* ── Panel filtros ── */
+    .filter-panel {
+      background: #f7f9fc; border-bottom: 1px solid #dde1e7;
+      overflow: hidden; max-height: 0;
+      transition: max-height .25s ease, padding .25s ease; flex-shrink: 0;
+    }
+    .filter-panel.open { max-height: 200px; padding: 11px 16px; }
+    .filter-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+      gap: 10px; align-items: end;
+    }
+    .fg { display: flex; flex-direction: column; gap: 3px; }
+    .fg label { font-size: .73rem; color: #555; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .fg input, .fg select {
+      padding: 6px 9px; border: 1px solid #ccc; border-radius: 6px;
+      font-size: .84rem; background: #fff;
+    }
+    .fg input:focus, .fg select:focus { outline: none; border-color: #1a3a5c; }
+    .fg-check { display: flex; align-items: center; gap: 7px; font-size: .84rem; padding-top: 17px; }
+
+    /* ── Info bar ── */
+    .info-bar {
+      padding: 5px 16px; font-size: .79rem; color: #555;
+      background: #f8f9fb; border-bottom: 1px solid #e8eaed;
+      display: flex; align-items: center; gap: 10px; flex-shrink: 0; min-height: 32px;
+    }
+    .tag {
+      background: #e3eaf5; color: #1a3a5c;
+      padding: 2px 8px; border-radius: 10px; font-size: .73rem;
+    }
+    .export-btns { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+
+    /* ── Tabla ── */
+    .table-wrap { overflow: auto; flex: 1; padding: 10px 14px; }
+    table {
+      width: 100%; border-collapse: collapse; background: #fff;
+      border-radius: 8px; overflow: hidden;
+      box-shadow: 0 1px 6px rgba(0,0,0,.08); font-size: .82rem;
+    }
+    thead { position: sticky; top: 0; z-index: 2; }
+    thead th {
+      background: #1a3a5c; color: #fff;
+      padding: 8px 10px; text-align: left; font-weight: 500; white-space: nowrap;
+    }
+    thead th.num   { text-align: right; }
+    thead th.sort  { cursor: pointer; user-select: none; }
+    thead th.sort:hover { background: #245080; }
+    /* cabecera de almacen ligeramente diferente */
+    thead th.alm-h { background: #1d4d7a; border-left: 1px solid #2a5f91; }
+    tbody tr:nth-child(even) { background: #f7f9fc; }
+    tbody tr:hover { background: #e8f0fe; cursor: pointer; }
+    tbody td { padding: 7px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.alm { background: #f4f7ff; border-left: 1px solid #dde6f5; text-align: right; font-variant-numeric: tabular-nums; }
+    td.alm-total { background: #eaf0ff; font-weight: 600; border-left: 2px solid #b0c4e8; text-align: right; font-variant-numeric: tabular-nums; }
+
+    .ex-cero { color: #aaa; }
+    .ex-neg  { color: #c0392b; font-weight: 700; }
+    .ex-ok   { color: #27ae60; font-weight: 600; }
+    .ex-bajo { color: #e67e22; font-weight: 600; }
+
+    .badge { padding: 2px 7px; border-radius: 10px; font-size: .7rem; }
+    .badge-a { background: #eafaf1; color: #27ae60; }
+    .badge-i { background: #fdecea; color: #c0392b; }
+
+    /* ── Mensajes ── */
+    .empty { text-align: center; padding: 50px; color: #999; font-size: .88rem; }
+    .error-msg {
+      background: #fdecea; color: #c0392b;
+      padding: 12px 16px; border-radius: 6px; margin: 14px; font-size: .84rem;
+    }
+
+    /* ── Modal ── */
+    .overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.42); z-index: 200;
+      align-items: center; justify-content: center;
+    }
+    .overlay.show { display: flex; }
+    .modal {
+      background: #fff; border-radius: 10px;
+      padding: 20px; min-width: 340px; max-width: 500px; width: 92%;
+      box-shadow: 0 8px 32px rgba(0,0,0,.22);
+    }
+    .modal-hdr { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .modal-hdr h2 { font-size: .92rem; color: #1a3a5c; line-height: 1.35; max-width: 90%; }
+    .modal-hdr button { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #888; }
+    .modal table { font-size: .83rem; }
+    .modal tfoot td { font-weight: 700; border-top: 2px solid #ddd; padding-top: 6px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Consulta de Existencias{% if sin_costo %} <span style="opacity:.7;font-weight:400;">(Vendedores)</span>{% endif %}</h1>
+    <span>Aspel SAE 9.0</span>
+  </div>
+  <div class="nav-links">
+    {% if es_admin %}
+    <a href="/admin/database">Base de datos</a>
+    <a href="/admin/whatsapp">WhatsApp</a>
+    <a href="/admin/usuarios">Cuentas</a>
+    {% endif %}
+    <button class="btn btn-outline" id="btnFiltros" onclick="toggleFiltros()">Filtros avanzados</button>
+  </div>
+</header>
+
+<div class="searchbar">
+  <div id="empresa-wrap">
+    <select id="empresa" onchange="onEmpresaChange()">
+      <option value="">Cargando...</option>
+    </select>
+  </div>
+  <input type="text" id="buscar" placeholder="Buscar por clave o descripcion..." autofocus>
+  <button class="btn btn-primary" onclick="cargar()">Buscar</button>
+  <button class="btn btn-secondary" onclick="limpiarTodo()">Limpiar</button>
+</div>
+
+<div class="filter-panel" id="filterPanel">
+  <div class="filter-grid">
+    <div class="fg">
+      <label>Clave desde</label>
+      <input type="text" id="cveDesde" placeholder="Ej: A001">
+    </div>
+    <div class="fg">
+      <label>Clave hasta</label>
+      <input type="text" id="cveHasta" placeholder="Ej: Z999">
+    </div>
+    <div class="fg">
+      <label>Linea de producto</label>
+      <select id="linea"><option value="">Todas las lineas</option></select>
+    </div>
+    <div class="fg">
+      <label>Con existencia en almacen</label>
+      <select id="almacen"><option value="">Cualquier almacen</option></select>
+    </div>
+    <div class="fg-check">
+      <input type="checkbox" id="solocon">
+      <label for="solocon">Solo con existencia</label>
+    </div>
+  </div>
+</div>
+
+<div class="info-bar">
+  <span id="info-txt">Presiona Buscar o escribe una clave para consultar.</span>
+  <div id="tags" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
+  <div class="export-btns">
+    <button id="btnExcel" class="btn btn-excel" onclick="exportarExcel()" disabled>Excel</button>
+    <button id="btnPDF"   class="btn btn-pdf"   onclick="exportarPDF()"   disabled>PDF</button>
+  </div>
+</div>
+
+<div class="table-wrap" id="contenido">
+  <div class="empty">Listo para consultar.</div>
+</div>
+
+<div class="overlay" id="overlay" onclick="cerrarModal(event)">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="modal-titulo"></h2>
+      <button onclick="cerrarModal()">&times;</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+  // ── Estado ────────────────────────────────────────────────────
+  const SIN_COSTO = {{ 'true' if sin_costo else 'false' }};
+  const API_PRODUCTOS = '/api/productos';
+  let filas    = [];          // datos actuales
+  let almLista = [];          // [{cve, descr}, ...]  de la BD
+  let sortCol  = null, sortDir = 1;
+  let panelOpen = false;
+
+  function empresaActual() {
+    return document.getElementById('empresa').value || '';
+  }
+
+  // ── Inicializar selects ───────────────────────────────────────
+  fetch('/api/empresas').then(r => r.json()).then(er => {
+    const sel = document.getElementById('empresa');
+    sel.innerHTML = '';
+    if (er.ok && er.data.length > 1) {
+      er.data.forEach(e => addOptionEl(sel, e.id, e.nombre));
+      sel.value = er.default || '';
+      document.getElementById('empresa-wrap').style.display = '';
+    } else if (er.ok && er.data.length === 1) {
+      addOptionEl(sel, er.data[0].id, er.data[0].nombre);
+    }
+    cargarFiltros();
+  }).catch(() => cargarFiltros());
+
+  function cargarFiltros() {
+    const emp = empresaActual();
+    const qs  = emp ? `?empresa=${encodeURIComponent(emp)}` : '';
+    Promise.all([
+      fetch('/api/lineas'   + qs).then(r => r.json()),
+      fetch('/api/almacenes' + qs).then(r => r.json()),
+    ]).then(([lr, ar]) => {
+      const linSel = document.getElementById('linea');
+      linSel.innerHTML = '<option value="">Todas las lineas</option>';
+      if (lr.ok) lr.data.forEach(l => addOption('linea', l, l));
+      const almSel = document.getElementById('almacen');
+      almSel.innerHTML = '<option value="">Cualquier almacen</option>';
+      if (ar.ok) {
+        almLista = ar.data;
+        ar.data.forEach(a => addOption('almacen', a.cve, `${a.cve} - ${a.descr}`));
+      }
+    });
+  }
+
+  function onEmpresaChange() {
+    cargarFiltros();
+    document.getElementById('contenido').innerHTML = '<div class="empty">Listo para consultar.</div>';
+    filas = [];
+    habilitarExport(false);
+  }
+
+  function addOptionEl(sel, val, txt) {
+    const o = document.createElement('option');
+    o.value = val; o.textContent = txt;
+    sel.appendChild(o);
+  }
+
+  function addOption(selId, val, txt) {
+    addOptionEl(document.getElementById(selId), val, txt);
+  }
+
+  // ── Enter en inputs ───────────────────────────────────────────
+  ['buscar','cveDesde','cveHasta'].forEach(id =>
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key==='Enter') cargar(); })
+  );
+
+  function toggleFiltros() {
+    panelOpen = !panelOpen;
+    document.getElementById('filterPanel').classList.toggle('open', panelOpen);
+    document.getElementById('btnFiltros').classList.toggle('active', panelOpen);
+  }
+
+  // ── Limpiar ───────────────────────────────────────────────────
+  function limpiarTodo() {
+    ['buscar','cveDesde','cveHasta'].forEach(id => document.getElementById(id).value = '');
+    ['linea','almacen'].forEach(id => document.getElementById(id).value = '');   // empresa se conserva
+    document.getElementById('solocon').checked = false;
+    document.getElementById('info-txt').textContent = 'Filtros limpiados.';
+    document.getElementById('tags').innerHTML = '';
+    document.getElementById('contenido').innerHTML = '<div class="empty">Listo para consultar.</div>';
+    filas = [];
+    habilitarExport(false);
+  }
+
+  // ── Cargar datos ──────────────────────────────────────────────
+  async function cargar() {
+    const q        = document.getElementById('buscar').value.trim();
+    const linea    = document.getElementById('linea').value;
+    const almacen  = document.getElementById('almacen').value;
+    const cveDesde = document.getElementById('cveDesde').value.trim();
+    const cveHasta = document.getElementById('cveHasta').value.trim();
+    const solocon  = document.getElementById('solocon').checked ? '1' : '0';
+
+    document.getElementById('contenido').innerHTML = '<div class="empty">Consultando...</div>';
+    renderTags({ q, linea, almacen, cveDesde, cveHasta, solocon });
+
+    let res;
+    try {
+      const empresa = empresaActual();
+      const p = new URLSearchParams({ q, linea, almacen, cve_desde: cveDesde, cve_hasta: cveHasta, solo_con: solocon });
+      if (empresa) p.set('empresa', empresa);
+      res = await fetch(API_PRODUCTOS + '?' + p).then(r => r.json());
+    } catch(e) {
+      document.getElementById('contenido').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+      return;
+    }
+    if (!res.ok) {
+      document.getElementById('contenido').innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
+      return;
+    }
+
+    filas    = res.data;
+    almLista = res.almacenes || almLista;
+    sortCol  = null;
+    habilitarExport(filas.length > 0);
+    renderTabla(filas);
+  }
+
+  // ── Tags de filtros ───────────────────────────────────────────
+  function renderTags({ q, linea, almacen, cveDesde, cveHasta, solocon }) {
+    const t = [];
+    const empSel = document.getElementById('empresa');
+    if (empSel && empSel.options.length > 1 && empSel.value)
+      t.push(empSel.options[empSel.selectedIndex]?.text || '');
+    if (q)        t.push(`"${q}"`);
+    if (cveDesde) t.push(`Desde: ${cveDesde}`);
+    if (cveHasta) t.push(`Hasta: ${cveHasta}`);
+    if (linea)    t.push(`Linea: ${linea}`);
+    if (almacen) {
+      const sel = document.getElementById('almacen');
+      t.push(`Alm: ${sel.options[sel.selectedIndex]?.text || almacen}`);
+    }
+    if (solocon === '1') t.push('Con exist.');
+    document.getElementById('tags').innerHTML = t.map(x => `<span class="tag">${escH(x)}</span>`).join('');
+  }
+
+  // ── Render tabla ──────────────────────────────────────────────
+  function renderTabla(rows) {
+    const n = rows.length;
+    document.getElementById('info-txt').textContent =
+      n === 0   ? 'Sin resultados.' :
+      n === 500 ? 'Primeros 500 resultados — afina la busqueda para ver mas.' :
+                  `${n} producto${n!==1?'s':''}.`;
+
+    if (n === 0) {
+      document.getElementById('contenido').innerHTML = '<div class="empty">Sin productos que coincidan.</div>';
+      return;
+    }
+
+    // Cabeceras almacen
+    const almCols = almLista.map(a =>
+      `<th class="num sort alm-h" onclick="ordenar('ALM_${a.cve}')">${escH(a.descr)}</th>`
+    ).join('');
+
+    let html = `<table><thead><tr>
+      <th class="sort" onclick="ordenar('CVE_ART')">Clave</th>
+      <th class="sort" onclick="ordenar('DESCR')">Descripcion</th>
+      <th class="sort" onclick="ordenar('LIN_PROD')">Linea</th>
+      <th>Unidad</th>
+      ${almCols}
+      <th class="num sort" onclick="ordenar('EXIST_TOTAL')" title="Suma total de todos los almacenes">Total</th>
+      ${SIN_COSTO ? '' : '<th class="num sort" onclick="ordenar(\'ULT_COSTO\')">Ult. Costo</th>'}
+      <th class="num sort" onclick="ordenar('PREC1')">Precio 1</th>
+      <th class="num sort" onclick="ordenar('PREC2')">Precio 2</th>
+      <th class="num sort" onclick="ordenar('PREC3')">Precio 3</th>
+      <th>Estatus</th>
+    </tr></thead><tbody>`;
+
+    rows.forEach(r => {
+      const activo = r.STATUS === 'A';
+      const tot    = Number(r.EXIST_TOTAL || 0);
+      const totCls = tot < 0 ? 'ex-neg' : tot === 0 ? 'ex-cero' : r.BAJO_STOCK ? 'ex-bajo' : 'ex-ok';
+
+      const almCells = almLista.map(a => {
+        const v = Number(r[`ALM_${a.cve}`] ?? 0);
+        const cls = v < 0 ? 'ex-neg' : v === 0 ? 'ex-cero' : 'ex-ok';
+        return `<td class="alm ${cls}">${fmt(v)}</td>`;
+      }).join('');
+
+      html += `<tr onclick="verAlmacenes('${escA(r.CVE_ART)}','${escA(r.DESCR)}')">
+        <td><strong>${escH(r.CVE_ART)}</strong></td>
+        <td>${escH(r.DESCR||'')}</td>
+        <td>${escH(r.LIN_PROD||'')}</td>
+        <td>${escH(r.UNI_MED||'')}</td>
+        ${almCells}
+        <td class="alm-total ${totCls}">${fmt(tot)}</td>
+        ${SIN_COSTO ? '' : `<td class="num">${fmtP(r.ULT_COSTO)}</td>`}
+        <td class="num">${fmtP(r.PREC1)}</td>
+        <td class="num">${fmtP(r.PREC2)}</td>
+        <td class="num">${fmtP(r.PREC3)}</td>
+        <td><span class="badge ${activo?'badge-a':'badge-i'}">${activo?'Activo':'Inactivo'}</span></td>
+      </tr>`;
+    });
+
+    html += '</tbody></table>';
+    document.getElementById('contenido').innerHTML = html;
+  }
+
+  // ── Ordenar ───────────────────────────────────────────────────
+  function ordenar(col) {
+    sortDir = sortCol === col ? sortDir * -1 : 1;
+    sortCol = col;
+    const sorted = [...filas].sort((a, b) => {
+      const va = a[col] ?? '', vb = b[col] ?? '';
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sortDir;
+      return String(va).localeCompare(String(vb), 'es') * sortDir;
+    });
+    renderTabla(sorted);
+  }
+
+  // ── Modal detalle almacenes ───────────────────────────────────
+  async function verAlmacenes(clave, descr) {
+    // Construir detalle desde los datos ya cargados (sin peticion extra)
+    const prod = filas.find(r => r.CVE_ART === clave);
+    document.getElementById('modal-titulo').textContent = `${clave} — ${descr}`;
+
+    let total = 0;
+    let html = `<table><thead><tr><th>Almacen</th><th class="num">Existencia</th></tr></thead><tbody>`;
+    almLista.forEach(a => {
+      const v = Number(prod ? (prod[`ALM_${a.cve}`] ?? 0) : 0);
+      total += v;
+      const cls = v < 0 ? 'ex-neg' : v === 0 ? 'ex-cero' : 'ex-ok';
+      html += `<tr><td>${escH(a.descr)}</td><td class="num ${cls}">${fmt(v)}</td></tr>`;
+    });
+    html += `</tbody><tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${fmt(total)}</strong></td></tr></tfoot></table>`;
+
+    document.getElementById('modal-body').innerHTML = html;
+    document.getElementById('overlay').classList.add('show');
+  }
+
+  function cerrarModal(e) {
+    if (!e || e.target.id === 'overlay')
+      document.getElementById('overlay').classList.remove('show');
+  }
+
+  // ── Exportar: cabeceras y filas comunes ───────────────────────
+  function buildExportData() {
+    const almCabs = almLista.map(a => a.descr);
+    const costoCab  = SIN_COSTO ? [] : ['Ult. Costo'];
+    const cabeceras = ['Clave', 'Descripcion', 'Linea', 'Unidad', ...almCabs, 'Total',
+                       ...costoCab, 'Precio 1', 'Precio 2', 'Precio 3', 'Estatus'];
+    const cuerpo = filas.map(r => [
+      r.CVE_ART,
+      r.DESCR || '',
+      r.LIN_PROD || '',
+      r.UNI_MED || '',
+      ...almLista.map(a => Number(r[`ALM_${a.cve}`] ?? 0)),
+      Number(r.EXIST_TOTAL ?? 0),
+      ...(SIN_COSTO ? [] : [r.ULT_COSTO ?? 0]),
+      r.PREC1 ?? 0,
+      r.PREC2 ?? 0,
+      r.PREC3 ?? 0,
+      r.STATUS === 'A' ? 'Activo' : 'Inactivo'
+    ]);
+    return { cabeceras, cuerpo };
+  }
+
+  // ── Exportar Excel ────────────────────────────────────────────
+  function exportarExcel() {
+    if (!filas.length) return;
+    if (typeof XLSX === 'undefined') { alert('Libreria Excel cargando, reintenta.'); return; }
+
+    const { cabeceras, cuerpo } = buildExportData();
+    const hoja = XLSX.utils.aoa_to_sheet([cabeceras, ...cuerpo]);
+
+    // Anchos de columna
+    const baseW    = [14, 42, 14, 8];
+    const almW     = almLista.map(() => ({ wch: 16 }));
+    const costoW   = SIN_COSTO ? [] : [{ wch: 12 }];
+    hoja['!cols'] = [
+      ...baseW.map(w => ({ wch: w })),
+      ...almW,
+      { wch: 12 },
+      ...costoW,
+      { wch: 12 }, { wch: 12 }, { wch: 12 },
+      { wch: 9 }
+    ];
+
+    // Formato numerico para columnas de existencia y precios
+    const numStart = 4;           // primera col de existencia
+    const numEnd   = cabeceras.length - 2;  // ultima de precio (antes de Estatus)
+    cuerpo.forEach((_, ri) => {
+      for (let ci = numStart; ci <= numEnd; ci++) {
+        const addr = XLSX.utils.encode_cell({ r: ri + 1, c: ci });
+        if (hoja[addr]) hoja[addr].z = '#,##0.00';
+      }
+    });
+
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, 'Existencias');
+    XLSX.writeFile(libro, `existencias_${hoy()}.xlsx`);
+  }
+
+  // ── Exportar PDF ──────────────────────────────────────────────
+  function exportarPDF() {
+    if (!filas.length) return;
+    if (typeof window.jspdf === 'undefined') { alert('Libreria PDF cargando, reintenta.'); return; }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' });
+
+    const tags = Array.from(document.querySelectorAll('#tags .tag')).map(e => e.textContent).join('  |  ');
+    doc.setFontSize(13); doc.setTextColor(26, 58, 92);
+    doc.text('Existencias por Almacen - Aspel SAE 9.0', 14, 14);
+    doc.setFontSize(8); doc.setTextColor(90, 90, 90);
+    doc.text(`Generado: ${new Date().toLocaleString('es-MX')}   |   ${filas.length} producto(s)`, 14, 20);
+    let startY = 26;
+    if (tags) { doc.text(`Filtros: ${tags}`, 14, 26); startY = 32; }
+
+    const { cabeceras, cuerpo } = buildExportData();
+    const f2 = v => typeof v === 'number'
+      ? v.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : (v ?? '—');
+
+    const bodyFmt = cuerpo.map(row => row.map(f2));
+
+    // Columnas numericas: existencias (desde indice 4) + precios
+    const numStart = 4;
+    const numEnd   = cabeceras.length - 2;
+    const colStyles = {};
+    for (let i = numStart; i <= numEnd; i++) colStyles[i] = { halign: 'right' };
+
+    // Colorear celdas de existencia en el cuerpo
+    const almCount = almLista.length;
+    doc.autoTable({
+      head: [cabeceras],
+      body: bodyFmt,
+      startY,
+      styles: { fontSize: 6.5, cellPadding: 1.6, overflow: 'ellipsize' },
+      headStyles: { fillColor: [26, 58, 92], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+      alternateRowStyles: { fillColor: [247, 249, 252] },
+      columnStyles: colStyles,
+      // Colorear cabeceras de almacen
+      didParseCell(data) {
+        if (data.section === 'head') {
+          const ci = data.column.index;
+          if (ci >= 4 && ci < 4 + almCount) {
+            data.cell.styles.fillColor = [29, 77, 122];
+          }
+          if (ci === 4 + almCount) {
+            data.cell.styles.fillColor = [20, 50, 80];
+          }
+        }
+        // Celdas de existencia: colorear negativo/cero/positivo
+        if (data.section === 'body') {
+          const ci = data.column.index;
+          if (ci >= 4 && ci <= 4 + almCount) {
+            const raw = cuerpo[data.row.index]?.[ci];
+            if (typeof raw === 'number') {
+              if (raw < 0)  data.cell.styles.textColor = [192, 57, 43];
+              else if (raw === 0) data.cell.styles.textColor = [180, 180, 180];
+              else data.cell.styles.textColor = [39, 174, 96];
+            }
+          }
+        }
+      },
+      didDrawPage(data) {
+        const pg = doc.internal.getCurrentPageInfo().pageNumber;
+        const tot = doc.internal.getNumberOfPages();
+        doc.setFontSize(7); doc.setTextColor(160);
+        doc.text(`Pag. ${pg}/${tot}`, doc.internal.pageSize.width - 25, doc.internal.pageSize.height - 7);
+        doc.text('Aspel SAE 9.0', 14, doc.internal.pageSize.height - 7);
+      }
+    });
+
+    doc.save(`existencias_${hoy()}.pdf`);
+  }
+
+  // ── Utilidades ────────────────────────────────────────────────
+  function habilitarExport(on) {
+    document.getElementById('btnExcel').disabled = !on;
+    document.getElementById('btnPDF').disabled   = !on;
+  }
+  const fmtOpts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  const fmt  = v => Number(v ?? 0).toLocaleString('es-MX', fmtOpts);
+  const fmtP = v => v == null ? '—' : Number(v).toLocaleString('es-MX', fmtOpts);
+  const hoy  = () => new Date().toISOString().slice(0, 10);
+  const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const escA = s => String(s ?? '').replace(/'/g,"\\'");
+</script>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+</body>
+</html>

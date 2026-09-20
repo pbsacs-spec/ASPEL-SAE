@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    header a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    header a:hover { color: #fff; }
+
+    .page { max-width: 920px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr {
+      background: #f7f9fc; border-bottom: 1px solid #e0e4ea;
+      padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c;
+    }
+    .card-body { padding: 18px; }
+
+    /* Tabs */
+    .tabs { display: flex; border-bottom: 2px solid #e0e4ea; margin-bottom: 18px; }
+    .tab {
+      padding: 9px 20px; cursor: pointer; font-size: .88rem; font-weight: 500;
+      color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px;
+      user-select: none;
+    }
+    .tab.active { color: #1a3a5c; border-color: #1a3a5c; }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* QR panel */
+    .qr-layout { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: start; }
+    .qr-box {
+      width: 220px; height: 220px; border: 2px solid #dde1e7; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      background: #fafafa; flex-shrink: 0; position: relative; overflow: hidden;
+    }
+    .qr-box img { width: 100%; height: 100%; object-fit: contain; border-radius: 8px; }
+    .qr-placeholder { text-align: center; color: #aaa; font-size: .82rem; padding: 20px; line-height: 1.6; }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px; font-size: .82rem; font-weight: 600;
+    }
+    .status-connected   { background: #eafaf1; color: #1e8449; }
+    .status-waiting_qr  { background: #fef9e7; color: #9a6700; }
+    .status-disconnected { background: #fdecea; color: #922b21; }
+    .status-offline     { background: #f0f2f5; color: #888; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor; animation: none;
+    }
+    .status-waiting_qr .dot,
+    .status-connected .dot { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .info-list { list-style: none; display: grid; gap: 8px; font-size: .86rem; color: #444; }
+    .info-list li { display: flex; gap: 8px; align-items: flex-start; line-height: 1.45; }
+    .info-list li::before { content: '→'; color: #1a3a5c; flex-shrink: 0; font-weight: 700; }
+
+    /* Formularios */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .fg { display: flex; flex-direction: column; gap: 4px; }
+    .fg label { font-size: .75rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+    .fg input { padding: 7px 11px; border: 1px solid #ccc; border-radius: 6px; font-size: .86rem; font-family: monospace; }
+    .fg input:focus { outline: none; border-color: #1a3a5c; }
+    .fg small { font-size: .73rem; color: #888; line-height: 1.4; }
+    .span2 { grid-column: 1/-1; }
+
+    .btn { padding: 7px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: .86rem; font-weight: 500; }
+    .btn-primary { background: #1a3a5c; color: #fff; }
+    .btn-primary:hover { background: #245080; }
+    .btn-wa   { background: #25d366; color: #fff; }
+    .btn-wa:hover { background: #1ebe5d; }
+    .btn-gray { background: #6c757d; color: #fff; }
+    .btn-gray:hover { background: #5a6268; }
+
+    /* Flash */
+    .flash-ok  { background: #eafaf1; border-left: 4px solid #27ae60; padding: 10px 14px; border-radius: 4px; font-size: .86rem; color: #1e8449; white-space: pre-wrap; }
+    .flash-err { background: #fdecea; border-left: 4px solid #c0392b; padding: 10px 14px; border-radius: 4px; font-size: .86rem; color: #922b21; }
+    .flash-sim { background: #eaf4ff; border-left: 4px solid #2980b9; padding: 10px 14px; border-radius: 4px; font-size: .86rem; color: #1a5276; white-space: pre-wrap; font-family: monospace; }
+
+    /* Comandos */
+    .cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap: 10px; }
+    .cmd-card { border: 1px solid #e0e4ea; border-radius: 8px; padding: 11px 13px; font-size: .83rem; }
+    .cmd-card code { display: block; font-weight: 700; color: #1a3a5c; margin-bottom: 3px; font-family: monospace; font-size: .88rem; }
+    .cmd-card p { color: #555; line-height: 1.4; }
+
+    hr.sep { border: none; border-top: 1px solid #eee; margin: 14px 0; }
+    code.il { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: .83em; }
+
+    @media (max-width: 600px) {
+      .qr-layout { grid-template-columns: 1fr; }
+      .form-grid  { grid-template-columns: 1fr; }
+      .qr-box { width: 180px; height: 180px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>WhatsApp Bot — Aspel SAE</h1>
+  <div style="display:flex;gap:16px;align-items:center;">
+    <a href="/admin/database" style="color:#9bbfe0;">Base de datos</a>
+    <a href="/admin/usuarios" style="color:#9bbfe0;">Cuentas</a>
+    <a href="/">← Volver a Existencias</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=True) %}
+    {% for cat, msg in msgs %}
+      <div class="flash-{{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- Comandos del bot -->
+  <div class="card">
+    <div class="card-hdr">Comandos disponibles</div>
+    <div class="card-body">
+      <div class="cmd-grid">
+        <div class="cmd-card"><code>exist CLAVE</code><p>Existencias por almacen. Ej: <em>exist 12AC</em></p></div>
+        <div class="cmd-card"><code>info CLAVE</code><p>Exist. + precios + ult. costo. Ej: <em>info 12AC</em></p></div>
+        <div class="cmd-card"><code>buscar TEXTO</code><p>Busca por descripcion. Ej: <em>buscar cartucho</em></p></div>
+        <div class="cmd-card"><code>ayuda</code><p>Muestra la lista de comandos.</p></div>
+        <div class="cmd-card"><code>CLAVE</code><p>Sin comando: muestra existencias directamente.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simulador (siempre disponible) -->
+  <div class="card">
+    <div class="card-hdr">Simulador (prueba sin WhatsApp)</div>
+    <div class="card-body">
+      <form method="POST" action="/admin/whatsapp/simular" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <div class="fg" style="flex:1;min-width:200px;">
+          <label>Escribe un mensaje como si lo mandara un cliente</label>
+          <input name="mensaje" placeholder="Ej: info 12AC" autocomplete="off">
+        </div>
+        <div class="fg" style="min-width:180px;">
+          <label>Numero remitente (opcional)</label>
+          <input name="numero" placeholder="Vacio = sin costo" autocomplete="off">
+        </div>
+        <button class="btn btn-gray" type="submit">Simular respuesta</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Pestanas de modo de conexion -->
+  <div class="card">
+    <div class="card-hdr">Modo de conexion</div>
+    <div class="card-body">
+
+      <div class="tabs">
+        <div class="tab active" onclick="cambiarTab('qr')">Escanear QR (recomendado)</div>
+        <div class="tab" onclick="cambiarTab('meta')">Meta Cloud API</div>
+      </div>
+
+      <!-- ── PESTAÑA QR ── -->
+      <div id="tab-qr" class="tab-pane active">
+        <div class="qr-layout">
+
+          <!-- Imagen QR -->
+          <div>
+            <div class="qr-box" id="qr-box">
+              <div class="qr-placeholder" id="qr-placeholder">
+                Inicia el servicio<br>WhatsApp para<br>ver el QR
+              </div>
+              <img id="qr-img" src="" alt="QR" style="display:none;">
+            </div>
+            <div style="margin-top:10px;text-align:center;">
+              <span id="estado-badge" class="status-badge status-offline">
+                <span class="dot"></span>
+                <span id="estado-texto">Servicio offline</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Instrucciones -->
+          <div style="display:grid;gap:16px;">
+            <div>
+              <p style="font-weight:600;font-size:.9rem;margin-bottom:10px;">Como conectar tu WhatsApp:</p>
+              <ul class="info-list">
+                <li>Instala <strong>Node.js LTS</strong> desde <strong>nodejs.org</strong> si aun no lo tienes.</li>
+                <li>Haz doble clic en <code class="il">iniciar_whatsapp.bat</code> (en la carpeta del programa). La primera vez descarga dependencias automaticamente.</li>
+                <li>Cuando aparezca el codigo QR aqui, abrelo en tu telefono:
+                  <strong>WhatsApp → ⋮ → Dispositivos vinculados → Vincular dispositivo</strong></li>
+                <li>Una vez escaneado, el bot responde mensajes automaticamente. La sesion se guarda y no necesitas escanear de nuevo.</li>
+              </ul>
+            </div>
+
+            <hr class="sep">
+
+            <div>
+              <p style="font-weight:600;font-size:.88rem;margin-bottom:8px;">Numero que recibe mensajes:</p>
+              <p id="wa-numero" style="font-size:.85rem;color:#555;">Conecta el servicio para ver el numero.</p>
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="refrescarEstado()">Actualizar estado</button>
+              <a href="/admin/whatsapp/qr-image" target="_blank"
+                 style="padding:7px 18px;border-radius:6px;background:#f0f2f5;color:#333;text-decoration:none;font-size:.86rem;">
+                Ver QR en nueva pestaña
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PESTAÑA META ── -->
+      <div id="tab-meta" class="tab-pane">
+        <div style="display:grid;gap:16px;">
+
+          {% if configurado %}
+            <div style="background:#eafaf1;border:1px solid #a9dfbf;border-radius:8px;padding:10px 14px;color:#1e8449;font-size:.86rem;">
+              Credenciales Meta configuradas. Webhook activo en <code class="il">/whatsapp/webhook</code>
+            </div>
+          {% else %}
+            <div style="background:#fef9e7;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;color:#7d5a00;font-size:.86rem;">
+              Credenciales no configuradas. Requiere cuenta de Meta Business y aprobacion de WhatsApp Business API.
+            </div>
+          {% endif %}
+
+          <form method="POST" action="/admin/whatsapp">
+            <div class="form-grid" style="margin-bottom:14px;">
+              <div class="fg">
+                <label>Token de verificacion</label>
+                <input name="verify_token" value="{{ cfg.verify_token }}" placeholder="Lo inventas tu" autocomplete="off">
+                <small>Lo usas al registrar el webhook en Meta Developer.</small>
+              </div>
+              <div class="fg">
+                <label>ID del numero de telefono</label>
+                <input name="phone_number_id" value="{{ cfg.phone_number_id }}" placeholder="Ej: 123456789012345" autocomplete="off">
+                <small>Meta Developer → tu App → WhatsApp → API Setup.</small>
+              </div>
+              <div class="fg span2">
+                <label>Access Token</label>
+                <input name="access_token" value="{{ cfg.access_token }}" placeholder="EAAxxxxxxxxxxxxx..." autocomplete="off">
+                <small>Token permanente o temporal desde Meta Developer → WhatsApp → API Setup.</small>
+              </div>
+              <div class="fg span2">
+                <label>App Secret</label>
+                <input name="app_secret" value="{{ cfg.app_secret }}" placeholder="Meta Developer → tu App → Configuracion basica" autocomplete="off">
+                <small>Necesario para verificar que los mensajes del webhook realmente vienen de Meta. Sin esto, cualquiera podria simular mensajes.</small>
+              </div>
+              <div class="fg span2">
+                <label>Numeros que ven el costo (separados por coma)</label>
+                <input name="numeros_con_costo" value="{{ cfg.numeros_con_costo }}" placeholder="Ej: 5215512345678,5215587654321">
+                <small>Los comandos <code class="il">info</code>/<code class="il">pdf</code>/<code class="il">excel</code> solo muestran "Ult. Costo" a estos numeros. Vacio = nadie ve costo por WhatsApp.</small>
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">Guardar</button>
+          </form>
+
+          <hr class="sep">
+
+          <form method="POST" action="/admin/whatsapp/test" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="fg" style="flex:1;min-width:200px;">
+              <label>Enviar mensaje de prueba al numero</label>
+              <input name="numero" placeholder="521234567890 (sin +)" autocomplete="off">
+            </div>
+            <button class="btn btn-wa" type="submit">Enviar prueba</button>
+          </form>
+
+          <hr class="sep">
+
+          <div>
+            <p style="font-weight:600;font-size:.88rem;margin-bottom:8px;">URL del webhook (para Meta Developer):</p>
+            <code class="il" id="webhook-url">http://TU-IP:5000/whatsapp/webhook</code>
+            <p style="font-size:.78rem;color:#888;margin-top:5px;">Necesitas una URL publica HTTPS. Usa ngrok para pruebas: <code class="il">ngrok http 5000</code></p>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- card-body -->
+  </div><!-- card -->
+
+</div><!-- page -->
+
+<script>
+  // ── Tabs ──────────────────────────────────────────────────────
+  function cambiarTab(id) {
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      const ids = ['qr', 'meta'];
+      t.classList.toggle('active', ids[i] === id);
+    });
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-' + id).classList.add('active');
+  }
+
+  // ── QR / Estado ───────────────────────────────────────────────
+  const LABELS = {
+    connected:    ['Conectado', 'status-connected'],
+    waiting_qr:   ['Esperando escaneo', 'status-waiting_qr'],
+    disconnected: ['Desconectado', 'status-disconnected'],
+    offline:      ['Servicio offline', 'status-offline'],
+  };
+
+  let pollingTimer = null;
+
+  async function refrescarEstado() {
+    let s = 'offline';
+    try {
+      const r = await fetch('/admin/whatsapp/qr-status');
+      const d = await r.json();
+      s = d.status || 'offline';
+    } catch(_) {}
+
+    const [label, cls] = LABELS[s] || LABELS.offline;
+    const badge = document.getElementById('estado-badge');
+    badge.className = 'status-badge ' + cls;
+    document.getElementById('estado-texto').textContent = label;
+
+    const img         = document.getElementById('qr-img');
+    const placeholder = document.getElementById('qr-placeholder');
+
+    if (s === 'waiting_qr') {
+      // Mostrar imagen QR con cache-buster
+      img.src = '/admin/whatsapp/qr-image?t=' + Date.now();
+      img.onload = () => { img.style.display = 'block'; placeholder.style.display = 'none'; };
+      img.onerror = () => { img.style.display = 'none'; placeholder.style.display = 'block'; };
+    } else if (s === 'connected') {
+      img.style.display = 'none';
+      placeholder.innerHTML = '✓ Conectado';
+      placeholder.style.display = 'block';
+      document.getElementById('wa-numero').textContent =
+        'Bot activo. Los mensajes se responden automaticamente.';
+    } else {
+      img.style.display = 'none';
+      placeholder.innerHTML = s === 'offline'
+        ? 'Inicia el servicio<br>WhatsApp para<br>ver el QR'
+        : 'Desconectado.<br>Reinicia el servicio.';
+      placeholder.style.display = 'block';
+    }
+
+    // Polling rapido mientras espera QR, lento si conectado u offline
+    clearTimeout(pollingTimer);
+    const delay = s === 'waiting_qr' ? 3000 : s === 'connected' ? 15000 : 8000;
+    pollingTimer = setTimeout(refrescarEstado, delay);
+  }
+
+  // URL del webhook con la IP actual
+  try {
+    document.getElementById('webhook-url').textContent =
+      window.location.origin + '/whatsapp/webhook';
+  } catch(_) {}
+
+  // Arrancar polling al cargar
+  refrescarEstado();
+</script>
+</body>
+</html>

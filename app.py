@@ -15,8 +15,10 @@ app.register_blueprint(ventas_bp)
 
 @app.after_request
 def _sin_cache(resp):
-    """Evita que el navegador reuse una version cacheada entre roles/permisos."""
-    resp.headers["Cache-Control"] = "no-store"
+    """Evita que el navegador reuse una version cacheada entre roles/permisos.
+    Los archivos estaticos (librerias JS vendorizadas) si se pueden cachear."""
+    if not request.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-store"
     return resp
 
 

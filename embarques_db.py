@@ -4,12 +4,15 @@ facturas de Aspel SAE. No toca ninguna tabla de Aspel: es dato propio de esta ap
 """
 import contextlib
 import datetime
+import json
 import os
 import secrets
 import sqlite3
 import threading
 
 _DB_FILE = os.path.join(os.path.dirname(__file__), "embarques.db")
+_FOTOS_DIR = os.path.join(os.path.dirname(__file__), "embarque_fotos")
+os.makedirs(_FOTOS_DIR, exist_ok=True)
 
 # Serializa las escrituras (SQLite ya serializa a nivel de archivo, pero esto evita
 # condiciones de carrera al leer-antes-de-escribir, ej. validar duplicados).
@@ -89,7 +92,7 @@ def init_db():
         for columna, tipo in [
             ("token_entrega", "TEXT"), ("fecha_entrega", "TEXT"),
             ("entregado_via", "TEXT"), ("entregado_ref", "TEXT"),
-            ("firma_entrega", "TEXT"),
+            ("firma_entrega", "TEXT"), ("fotos_entrega", "TEXT"),
         ]:
             if columna not in cols:
                 con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} {tipo}")
@@ -287,18 +290,68 @@ def obtener_por_token(token):
         return dict(row) if row else None
 
 
-def marcar_entregado(embarque_id, via, ref, firma=None):
+def ruta_foto(nombre_archivo):
+    return os.path.join(_FOTOS_DIR, nombre_archivo)
+
+
+def guardar_fotos(embarque_id, fotos_bytes):
+    """Escribe cada foto (bytes JPEG) a disco -- NO en la base, para no inflar
+    embarques.db con binarios cada vez que se lista o consulta una etiqueta.
+    Regresa la lista de nombres de archivo guardados."""
+    nombres = []
+    for i, contenido in enumerate(fotos_bytes, 1):
+        nombre = f"{embarque_id}_{i}_{secrets.token_hex(4)}.jpg"
+        with open(ruta_foto(nombre), "wb") as f:
+            f.write(contenido)
+        nombres.append(nombre)
+    return nombres
+
+
+def _borrar_fotos(nombres_json):
+    if not nombres_json:
+        return
+    try:
+        nombres = json.loads(nombres_json)
+    except (TypeError, ValueError):
+        return
+    for nombre in nombres:
+        try:
+            os.remove(ruta_foto(nombre))
+        except OSError:
+            pass
+
+
+def fotos_de(embarque):
+    if not embarque or not embarque.get("fotos_entrega"):
+        return []
+    try:
+        return json.loads(embarque["fotos_entrega"])
+    except (TypeError, ValueError):
+        return []
+
+
+def marcar_entregado(embarque_id, via, ref, firma=None, fotos_bytes=None):
     """via: 'qr' | 'whatsapp'. ref: IP (qr) o numero de telefono (whatsapp).
     firma: PNG en base64 (data URI), solo aplica para 'qr' -- por WhatsApp no hay forma
-    de capturar una firma, solo texto.
-    Idempotente: si ya estaba entregada, no hace nada y regresa False."""
+    de capturar firma ni fotos, solo texto.
+    fotos_bytes: lista de hasta 3 fotos (bytes JPEG), opcional.
+    Idempotente: si ya estaba entregada, no hace nada (ni guarda fotos) y regresa False."""
+    nombres_fotos = guardar_fotos(embarque_id, fotos_bytes) if fotos_bytes else []
     with _LOCK, _conn() as con:
         con.execute("""
             UPDATE embarques SET estatus='entregado', fecha_entrega=?,
-                entregado_via=?, entregado_ref=?, firma_entrega=?
+                entregado_via=?, entregado_ref=?, firma_entrega=?, fotos_entrega=?
             WHERE id = ? AND estatus != 'entregado'
-        """, (_ahora(), via, ref, firma, embarque_id))
-        return con.total_changes > 0
+        """, (_ahora(), via, ref, firma, json.dumps(nombres_fotos) if nombres_fotos else None, embarque_id))
+        aplicado = con.total_changes > 0
+    if not aplicado:
+        # La etiqueta ya estaba entregada: no se debian guardar estas fotos, se descartan.
+        for nombre in nombres_fotos:
+            try:
+                os.remove(ruta_foto(nombre))
+            except OSError:
+                pass
+    return aplicado
 
 
 def reactivar(embarque_id, admin_user, motivo):
@@ -307,7 +360,7 @@ def reactivar(embarque_id, admin_user, motivo):
     registro del motivo en `notas` (no se pisa lo que ya hubiera en notas)."""
     with _LOCK, _conn() as con:
         row = con.execute(
-            "SELECT notas, fecha_entrega FROM embarques WHERE id = ? AND estatus = 'entregado'",
+            "SELECT notas, fecha_entrega, fotos_entrega FROM embarques WHERE id = ? AND estatus = 'entregado'",
             (embarque_id,),
         ).fetchone()
         if not row:
@@ -318,9 +371,11 @@ def reactivar(embarque_id, admin_user, motivo):
             f"-- motivo: {motivo}"
         )
         notas_nuevas = f"{row['notas']}\n{nota}" if row["notas"] else nota
+        _borrar_fotos(row["fotos_entrega"])
         con.execute("""
             UPDATE embarques SET estatus='embarcado', fecha_entrega=NULL,
-                entregado_via=NULL, entregado_ref=NULL, firma_entrega=NULL, notas=?
+                entregado_via=NULL, entregado_ref=NULL, firma_entrega=NULL,
+                fotos_entrega=NULL, notas=?
             WHERE id = ?
         """, (notas_nuevas, embarque_id))
         return True

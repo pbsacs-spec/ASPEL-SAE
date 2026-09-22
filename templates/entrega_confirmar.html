@@ -36,6 +36,20 @@
       background: none; border: none; color: #777; font-size: .8rem; cursor: pointer; text-decoration: underline;
     }
 
+    .fotos-label { text-align: left; font-size: .82rem; font-weight: 600; color: #333; margin-bottom: 6px; }
+    .fotos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+    .foto-slot {
+      position: relative; aspect-ratio: 1; border: 2px dashed #cdd1d9; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+      background: #f7f9fc; cursor: pointer; color: #999; font-size: 1.6rem;
+    }
+    .foto-slot img { width: 100%; height: 100%; object-fit: cover; }
+    .foto-slot .quitar {
+      position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%;
+      background: rgba(0,0,0,.6); color: #fff; border: none; font-size: .85rem; line-height: 1; cursor: pointer;
+    }
+    .foto-slot input { display: none; }
+
     .btn {
       width: 100%; padding: 14px; border: none; border-radius: 10px;
       font-size: 1rem; font-weight: 700; cursor: pointer; background: #1a7f3c; color: #fff;
@@ -86,6 +100,22 @@
   </div>
   <div class="firma-acciones">
     <button type="button" class="btn-limpiar" onclick="limpiarFirma()">Borrar firma</button>
+  </div>
+
+  <div class="fotos-label">Fotos de evidencia (opcional, hasta 3, con la camara)</div>
+  <div class="fotos-grid" id="fotosGrid">
+    <label class="foto-slot" data-slot="0">
+      <span class="mas">📷</span>
+      <input type="file" accept="image/*" capture="environment" onchange="capturarFoto(this, 0)">
+    </label>
+    <label class="foto-slot" data-slot="1">
+      <span class="mas">📷</span>
+      <input type="file" accept="image/*" capture="environment" onchange="capturarFoto(this, 1)">
+    </label>
+    <label class="foto-slot" data-slot="2">
+      <span class="mas">📷</span>
+      <input type="file" accept="image/*" capture="environment" onchange="capturarFoto(this, 2)">
+    </label>
   </div>
 
   <button class="btn" id="btnConfirmar" onclick="confirmar()" disabled>Confirmar entrega</button>
@@ -160,6 +190,50 @@
     placeholder.style.display = 'block';
   }
 
+  // ── Fotos (solo camara, hasta 3) ──────────────────────────────────
+  const fotosBase64 = [null, null, null];
+
+  function redimensionarImagen(file, maxDim, calidad) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDim) { height *= maxDim / width; width = maxDim; }
+        else if (height > maxDim) { width *= maxDim / height; height = maxDim; }
+        const c = document.createElement('canvas');
+        c.width = width; c.height = height;
+        c.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(c.toDataURL('image/jpeg', calidad));
+        URL.revokeObjectURL(img.src);
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  async function capturarFoto(input, idx) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const dataUrl = await redimensionarImagen(file, 1280, 0.75);
+      fotosBase64[idx] = dataUrl;
+      const slot = document.querySelector(`.foto-slot[data-slot="${idx}"]`);
+      slot.innerHTML = `<img src="${dataUrl}"><button type="button" class="quitar" onclick="quitarFoto(event, ${idx})">×</button>`;
+    } catch (e) {
+      alert('No se pudo procesar la foto, intenta de nuevo.');
+    } finally {
+      input.value = '';
+    }
+  }
+
+  function quitarFoto(ev, idx) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    fotosBase64[idx] = null;
+    const slot = document.querySelector(`.foto-slot[data-slot="${idx}"]`);
+    slot.innerHTML = `<span class="mas">📷</span><input type="file" accept="image/*" capture="environment" onchange="capturarFoto(this, ${idx})">`;
+  }
+
   async function confirmar() {
     if (!tieneTrazo) { alert('Debes firmar antes de confirmar.'); return; }
     const btn = btnConfirmar;
@@ -168,10 +242,11 @@
     btn.textContent = 'Confirmando...';
     try {
       const firma = canvas.toDataURL('image/png');
+      const fotos = fotosBase64.filter(f => f);
       const r = await fetch(window.location.pathname + '/confirmar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firma }),
+        body: JSON.stringify({ firma, fotos }),
       }).then(r => r.json());
       if (r.ok) {
         document.querySelector('.card').innerHTML =

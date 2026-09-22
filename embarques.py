@@ -302,7 +302,22 @@ def entrega_confirmar(token):
     if len(firma) > 2_000_000:
         return jsonify({"ok": False, "error": "La firma es demasiado grande."}), 400
 
-    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr, firma)
+    fotos_in = body.get("fotos") or []
+    if not isinstance(fotos_in, list) or len(fotos_in) > 3:
+        return jsonify({"ok": False, "error": "Maximo 3 fotos."}), 400
+    fotos_bytes = []
+    for foto in fotos_in:
+        foto = (foto or "").strip()
+        if not foto.startswith("data:image/"):
+            continue
+        if len(foto) > 8_000_000:
+            return jsonify({"ok": False, "error": "Una de las fotos es demasiado grande."}), 400
+        try:
+            fotos_bytes.append(base64.b64decode(foto.split(",", 1)[1]))
+        except (IndexError, ValueError, base64.binascii.Error):
+            return jsonify({"ok": False, "error": "Una de las fotos no es valida."}), 400
+
+    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr, firma, fotos_bytes)
     return jsonify({"ok": True, "nuevo": ok})
 
 
@@ -809,14 +824,36 @@ def _comprobante_pdf(e, emisor, logo):
         try:
             firma_bytes = base64.b64decode(e["firma_entrega"].split(",", 1)[1])
             y_firma = pdf.get_y()
-            pdf.image(firma_bytes, x=pdf.l_margin, y=y_firma, w=70)
-            pdf.set_y(y_firma + 35)
+            info = pdf.image(firma_bytes, x=pdf.l_margin, y=y_firma, w=70)
+            pdf.set_y(y_firma + info.rendered_height + 4)
             firma_ok = True
         except Exception:
             firma_ok = False
     if not firma_ok:
         pdf.set_font("Helvetica", "", 9.5)
         pdf.cell(0, 6, "Sin firma (entrega confirmada por WhatsApp).", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    fotos = embarques_db.fotos_de(e)
+    if fotos:
+        pdf.ln(6)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_fill_color(230, 236, 245)
+        pdf.cell(0, 8, "  EVIDENCIA FOTOGRAFICA", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(3)
+        ancho_disp = pdf.w - pdf.l_margin - pdf.r_margin
+        gap = 4
+        foto_w = (ancho_disp - gap * (len(fotos) - 1)) / len(fotos)
+        y0, x, alto_max = pdf.get_y(), pdf.l_margin, 0
+        for nombre in fotos:
+            ruta = embarques_db.ruta_foto(nombre)
+            if os.path.exists(ruta):
+                try:
+                    info = pdf.image(ruta, x=x, y=y0, w=foto_w)
+                    alto_max = max(alto_max, info.rendered_height)
+                except Exception:
+                    pass
+            x += foto_w + gap
+        pdf.set_y(y0 + alto_max + 4)
 
     return bytes(pdf.output())
 
@@ -850,3 +887,30 @@ def embarque_comprobante(embarque_id):
     if not e:
         return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
     return _comprobante_response(e)
+
+
+def _servir_foto(e, nombre):
+    if nombre not in embarques_db.fotos_de(e):
+        return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
+    ruta = embarques_db.ruta_foto(nombre)
+    if not os.path.exists(ruta):
+        return jsonify({"ok": False, "error": "Foto no encontrada."}), 404
+    return send_file(ruta, mimetype="image/jpeg")
+
+
+@embarques_bp.route("/entrega/<token>/foto/<nombre>")
+def entrega_foto(token, nombre):
+    e = embarques_db.obtener_por_token(token)
+    if not e:
+        return jsonify({"ok": False, "error": "Liga invalida."}), 404
+    return _servir_foto(e, nombre)
+
+
+@embarques_bp.route("/embarques/<int:embarque_id>/foto/<nombre>")
+@require_embarques
+def embarque_foto(embarque_id, nombre):
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    return _servir_foto(e, nombre)

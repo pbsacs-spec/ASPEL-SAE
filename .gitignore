@@ -7,6 +7,7 @@ embarque_config.ini
 
 # Datos de embarques (SQLite local, no es codigo)
 embarques.db
+embarque_fotos/
 
 # Sesion de WhatsApp (credenciales del dispositivo vinculado)
 wa_service/wa_session/

@@ -346,6 +346,13 @@
         <label>Fecha y hora de entrega</label>
         <div class="ver-valor">${escH((f.fecha_entrega || '').slice(0, 16).replace('T', ' '))} &middot; confirmada por ${escH(f.entregado_via === 'qr' ? 'QR' : 'WhatsApp')}</div>
 
+        ${f.lat_entrega != null && f.lon_entrega != null ? `
+        <label>Ubicacion GPS</label>
+        <div class="ver-valor">
+          ${f.lat_entrega.toFixed(6)}, ${f.lon_entrega.toFixed(6)}${f.precision_entrega ? ` (precision ~${Math.round(f.precision_entrega)} m)` : ''}
+          &nbsp;&middot;&nbsp;<a href="https://www.google.com/maps?q=${f.lat_entrega},${f.lon_entrega}" target="_blank">Ver en el mapa</a>
+        </div>` : ''}
+
         <label>Datos de envio</label>
         <div class="ver-valor">${envioTxt}</div>
 

@@ -4,6 +4,7 @@ db_config.ini
 wa_config.ini
 embarque_config.ini
 .secret_key
+https_cert/
 
 # Datos de embarques (SQLite local, no es codigo)
 embarques.db

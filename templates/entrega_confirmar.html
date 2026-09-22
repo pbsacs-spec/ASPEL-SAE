@@ -250,19 +250,35 @@
     slot.innerHTML = `<span class="mas">📷</span><input type="file" accept="image/*" capture="environment" onchange="capturarFoto(this, ${idx})">`;
   }
 
+  function obtenerUbicacion() {
+    // Nunca bloquea la confirmacion: si no hay soporte, se nego el permiso, no hay
+    // señal o el sitio no es HTTPS (el navegador exige "contexto seguro" para GPS),
+    // simplemente se sigue sin ubicacion.
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, precision: pos.coords.accuracy }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    });
+  }
+
   async function confirmar() {
     if (!tieneTrazo) { alert('Debes firmar antes de confirmar.'); return; }
     const btn = btnConfirmar;
     const res = document.getElementById('resultado');
     btn.disabled = true;
-    btn.textContent = 'Confirmando...';
+    btn.textContent = 'Obteniendo ubicacion...';
     try {
+      const ubicacion = await obtenerUbicacion();
+      btn.textContent = 'Confirmando...';
       const firma = canvas.toDataURL('image/png');
       const fotos = fotosBase64.filter(f => f);
       const r = await fetch(window.location.pathname + '/confirmar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firma, fotos }),
+        body: JSON.stringify({ firma, fotos, ubicacion }),
       }).then(r => r.json());
       if (r.ok) {
         document.querySelector('.card').innerHTML =

@@ -123,6 +123,21 @@ def _fallback(envio, general):
     return envio or general
 
 
+_HTTPS_CERT = os.path.join(os.path.dirname(__file__), "https_cert", "cert.pem")
+
+
+def _url_entrega(token):
+    """URL publica de confirmacion de entrega para el QR. Si hay certificado HTTPS
+    configurado (ver app.py: _iniciar_https_en_hilo), siempre apunta al puerto 5443
+    -- el navegador del celular exige HTTPS para permitir el GPS (navigator.geolocation),
+    sin importar si la etiqueta se genero desde el puerto 5000 normal. Sin certificado,
+    cae al mismo host/puerto de siempre (solo se pierde la opcion de GPS)."""
+    if os.path.exists(_HTTPS_CERT):
+        host = request.host.split(":")[0]
+        return f"https://{host}:5443/entrega/{token}"
+    return request.url_root.rstrip("/") + "/entrega/" + token
+
+
 @embarques_bp.route("/api/facturas/buscar")
 @require_embarques
 def facturas_buscar():
@@ -317,7 +332,20 @@ def entrega_confirmar(token):
         except (IndexError, ValueError, base64.binascii.Error):
             return jsonify({"ok": False, "error": "Una de las fotos no es valida."}), 400
 
-    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr, firma, fotos_bytes)
+    lat, lon, precision = None, None, None
+    ubicacion = body.get("ubicacion") or {}
+    try:
+        if ubicacion.get("lat") is not None and ubicacion.get("lon") is not None:
+            lat = float(ubicacion["lat"])
+            lon = float(ubicacion["lon"])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                lat = lon = None
+            elif ubicacion.get("precision") is not None:
+                precision = float(ubicacion["precision"])
+    except (TypeError, ValueError):
+        lat = lon = precision = None
+
+    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr, firma, fotos_bytes, lat, lon, precision)
     return jsonify({"ok": True, "nuevo": ok})
 
 
@@ -681,8 +709,7 @@ def etiqueta_pdf(embarque_id):
     folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
     fecha = e["fecha_creacion"][:10]
     num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
-    url_entrega = request.url_root.rstrip("/") + "/entrega/" + e["token_entrega"]
-    qr_png = _qr_png(url_entrega)
+    qr_png = _qr_png(_url_entrega(e["token_entrega"]))
 
     try:
         productos = _partidas_factura(empresa, e["factura_cve_doc"])
@@ -820,7 +847,20 @@ def _comprobante_pdf(e, emisor, logo):
     fecha_ent = (e["fecha_entrega"] or "")[:16].replace("T", " ")
     via_txt = {"qr": "Confirmado desde el QR de la etiqueta", "whatsapp": "Confirmado por WhatsApp"}.get(
         e["entregado_via"], e["entregado_via"] or "")
-    bloque("ENTREGA", [f"Fecha de entrega: {fecha_ent}", via_txt])
+    lineas_entrega = [f"Fecha de entrega: {fecha_ent}", via_txt]
+    tiene_ubicacion = e.get("lat_entrega") is not None and e.get("lon_entrega") is not None
+    if tiene_ubicacion:
+        prec_txt = f" (precision ~{e['precision_entrega']:.0f} m)" if e.get("precision_entrega") else ""
+        lineas_entrega.append(f"Ubicacion GPS: {e['lat_entrega']:.6f}, {e['lon_entrega']:.6f}{prec_txt}")
+    bloque("ENTREGA", lineas_entrega)
+
+    if tiene_ubicacion:
+        maps_url = f"https://www.google.com/maps?q={e['lat_entrega']},{e['lon_entrega']}"
+        pdf.set_font("Helvetica", "U", 9.5)
+        pdf.set_text_color(26, 58, 92)
+        pdf.cell(0, 6, "Ver ubicacion en Google Maps", link=maps_url, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
 
     # pdf.image() no respeta auto_page_break (solo cell()/multi_cell() lo hacen): una foto
     # de celular en vertical, alta, se dibujaba mas alla del borde de la pagina y esa parte

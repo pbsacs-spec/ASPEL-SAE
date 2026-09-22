@@ -217,5 +217,26 @@ def almacenes_route():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _iniciar_https_en_hilo():
+    """Segundo servidor, en HTTPS, ademas del HTTP de siempre en el puerto 5000.
+    Necesario porque el navegador del celular bloquea navigator.geolocation (GPS)
+    en paginas servidas por HTTP -- exige un "contexto seguro" (HTTPS). Usa un
+    certificado autofirmado (ver https_cert/README.txt); si no existe, se omite
+    y la app sigue funcionando igual, solo por HTTP como antes."""
+    cert = os.path.join(os.path.dirname(__file__), "https_cert", "cert.pem")
+    key = os.path.join(os.path.dirname(__file__), "https_cert", "key.pem")
+    if not (os.path.exists(cert) and os.path.exists(key)):
+        return
+    import threading
+    from werkzeug.serving import run_simple
+
+    def _servir():
+        run_simple("0.0.0.0", 5443, app, ssl_context=(cert, key), threaded=True)
+
+    threading.Thread(target=_servir, daemon=True, name="https-5443").start()
+    print("HTTPS (autofirmado) tambien disponible en el puerto 5443", flush=True)
+
+
 if __name__ == "__main__":
+    _iniciar_https_en_hilo()
     app.run(host="0.0.0.0", port=5000, debug=False)

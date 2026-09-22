@@ -93,6 +93,7 @@ def init_db():
             ("token_entrega", "TEXT"), ("fecha_entrega", "TEXT"),
             ("entregado_via", "TEXT"), ("entregado_ref", "TEXT"),
             ("firma_entrega", "TEXT"), ("fotos_entrega", "TEXT"),
+            ("lat_entrega", "REAL"), ("lon_entrega", "REAL"), ("precision_entrega", "REAL"),
         ]:
             if columna not in cols:
                 con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} {tipo}")
@@ -330,19 +331,23 @@ def fotos_de(embarque):
         return []
 
 
-def marcar_entregado(embarque_id, via, ref, firma=None, fotos_bytes=None):
+def marcar_entregado(embarque_id, via, ref, firma=None, fotos_bytes=None, lat=None, lon=None, precision=None):
     """via: 'qr' | 'whatsapp'. ref: IP (qr) o numero de telefono (whatsapp).
     firma: PNG en base64 (data URI), solo aplica para 'qr' -- por WhatsApp no hay forma
-    de capturar firma ni fotos, solo texto.
+    de capturar firma, fotos ni GPS, solo texto.
     fotos_bytes: lista de hasta 3 fotos (bytes JPEG), opcional.
+    lat/lon/precision: ubicacion del GPS del celular al confirmar, opcional (requiere
+    que el navegador haya podido usar navigator.geolocation, lo cual exige HTTPS).
     Idempotente: si ya estaba entregada, no hace nada (ni guarda fotos) y regresa False."""
     nombres_fotos = guardar_fotos(embarque_id, fotos_bytes) if fotos_bytes else []
     with _LOCK, _conn() as con:
         con.execute("""
             UPDATE embarques SET estatus='entregado', fecha_entrega=?,
-                entregado_via=?, entregado_ref=?, firma_entrega=?, fotos_entrega=?
+                entregado_via=?, entregado_ref=?, firma_entrega=?, fotos_entrega=?,
+                lat_entrega=?, lon_entrega=?, precision_entrega=?
             WHERE id = ? AND estatus != 'entregado'
-        """, (_ahora(), via, ref, firma, json.dumps(nombres_fotos) if nombres_fotos else None, embarque_id))
+        """, (_ahora(), via, ref, firma, json.dumps(nombres_fotos) if nombres_fotos else None,
+              lat, lon, precision, embarque_id))
         aplicado = con.total_changes > 0
     if not aplicado:
         # La etiqueta ya estaba entregada: no se debian guardar estas fotos, se descartan.
@@ -375,7 +380,8 @@ def reactivar(embarque_id, admin_user, motivo):
         con.execute("""
             UPDATE embarques SET estatus='embarcado', fecha_entrega=NULL,
                 entregado_via=NULL, entregado_ref=NULL, firma_entrega=NULL,
-                fotos_entrega=NULL, notas=?
+                fotos_entrega=NULL, lat_entrega=NULL, lon_entrega=NULL,
+                precision_entrega=NULL, notas=?
             WHERE id = ?
         """, (notas_nuevas, embarque_id))
         return True

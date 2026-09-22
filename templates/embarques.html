@@ -33,6 +33,7 @@
     .fg label { font-size: .78rem; font-weight: 600; color: #555; }
     .fg select, .fg input { padding: 7px 10px; border: 1px solid #cdd1d9; border-radius: 6px; font-size: .87rem; }
     #empresa-wrap { display: none; }
+    .atajos { display: flex; gap: 6px; }
 
     .btn { padding: 7px 16px; border: none; border-radius: 6px; font-size: .83rem; font-weight: 600; cursor: pointer; background: #1a3a5c; color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
     .btn:hover { opacity: .85; }
@@ -116,6 +117,7 @@
             <option value="">Todos</option>
             <option value="pendiente">Pendiente</option>
             <option value="embarcado">Embarcado</option>
+            <option value="entregado">Entregado</option>
           </select>
         </div>
         <div class="fg">
@@ -126,10 +128,19 @@
           <label>Hasta</label>
           <input type="date" id="hasta" onchange="cargar()">
         </div>
+        <div class="fg">
+          <label>&nbsp;</label>
+          <div class="atajos">
+            <button class="btn btn-sm btn-secondary" onclick="atajo('hoy')">Hoy</button>
+            <button class="btn btn-sm btn-secondary" onclick="atajo('semana')">Semana</button>
+            <button class="btn btn-sm btn-secondary" onclick="atajo('mes')">Mes</button>
+            <button class="btn btn-sm btn-secondary" onclick="atajo('todo')">Todo</button>
+          </div>
+        </div>
         <button class="btn" onclick="cargar()">Actualizar</button>
       </div>
       <div style="font-size:.76rem;color:#888;margin-top:8px;">
-        Desde/Hasta tambien filtran la seccion de "Facturas pendientes de embarque" (por fecha de la factura). Si no eliges fechas, se muestran los ultimos 15 dias.
+        Por defecto se muestra el mes en curso, para que la lista no crezca sin control con el tiempo. Usa "Todo" para ver el historial completo.
       </div>
     </div>
   </div>
@@ -166,6 +177,35 @@
     const sel = document.getElementById('empresa');
     return sel ? sel.value : '';
   }
+
+  function hoyISO(offsetDias = 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDias);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function atajo(cual) {
+    const hoy = new Date();
+    if (cual === 'hoy') {
+      document.getElementById('desde').value = hoyISO();
+      document.getElementById('hasta').value = hoyISO();
+    } else if (cual === 'semana') {
+      const diaSemana = (hoy.getDay() + 6) % 7; // lunes=0
+      document.getElementById('desde').value = hoyISO(-diaSemana);
+      document.getElementById('hasta').value = hoyISO();
+    } else if (cual === 'mes') {
+      document.getElementById('desde').value = hoyISO().slice(0, 8) + '01';
+      document.getElementById('hasta').value = hoyISO();
+    } else if (cual === 'todo') {
+      document.getElementById('desde').value = '';
+      document.getElementById('hasta').value = '';
+    }
+    cargar();
+  }
+
+  // Por defecto: mes en curso, para que la lista no crezca sin control con el tiempo.
+  document.getElementById('desde').value = hoyISO().slice(0, 8) + '01';
+  document.getElementById('hasta').value = hoyISO();
 
   fetch('/api/empresas').then(r => r.json()).then(er => {
     const sel = document.getElementById('empresa');

@@ -5,6 +5,7 @@ Solo lee de Aspel (FACTF01, CLIE01, PARAM_DATOSEMP01, PARAM_DOMFISCAL01); los da
 propios del embarque (destinatario editado, chofer/unidad o paqueteria/guia, y los
 datos del Emisor) se guardan localmente: ver embarques_db.py y embarque_config.ini.
 """
+import base64
 import configparser
 import datetime
 import io
@@ -283,7 +284,7 @@ def entrega_pagina(token):
         return render_template("entrega_confirmar.html", encontrada=False), 404
     folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
     return render_template(
-        "entrega_confirmar.html", encontrada=True, e=e, folio_txt=folio_txt,
+        "entrega_confirmar.html", encontrada=True, e=e, folio_txt=folio_txt, token=token,
         ya_entregada=(e["estatus"] == "entregado"),
     )
 
@@ -293,7 +294,15 @@ def entrega_confirmar(token):
     e = embarques_db.obtener_por_token(token)
     if not e:
         return jsonify({"ok": False, "error": "Liga invalida."}), 404
-    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr)
+
+    body = request.get_json(silent=True) or {}
+    firma = (body.get("firma") or "").strip()
+    if not firma.startswith("data:image/png;base64,"):
+        return jsonify({"ok": False, "error": "Debes firmar antes de confirmar."}), 400
+    if len(firma) > 2_000_000:
+        return jsonify({"ok": False, "error": "La firma es demasiado grande."}), 400
+
+    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr, firma)
     return jsonify({"ok": True, "nuevo": ok})
 
 
@@ -726,3 +735,118 @@ def etiqueta_pdf(embarque_id):
         io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False,
         download_name=f"etiqueta_{folio_txt}.pdf",
     )
+
+
+# ── Comprobante de entrega (con firma) ────────────────────────────────────
+
+def _comprobante_pdf(e, emisor, logo):
+    folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
+
+    pdf = FPDF(orientation="P", unit="mm", format="Letter")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margin(15)
+
+    if logo:
+        try:
+            info = pdf.image(logo, x=Align.C, y=12, w=28)
+            pdf.set_y(12 + info.rendered_height + 4)
+        except Exception:
+            pdf.set_y(14)
+    else:
+        pdf.set_y(14)
+
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "COMPROBANTE DE ENTREGA", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 7, f"Factura {folio_txt}", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(4)
+
+    def bloque(titulo, lineas):
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_fill_color(230, 236, 245)
+        pdf.cell(0, 8, f"  {titulo}", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(2)
+        for i, linea in enumerate(lineas):
+            pdf.set_font("Helvetica", "B" if i == 0 else "", 10 if i == 0 else 9.5)
+            pdf.multi_cell(0, 6, _pdf_safe(linea), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(4)
+
+    bloque("EMISOR", _lineas_compactas(
+        emisor["nombre_empresa"] or "(sin configurar)", emisor["calle"], emisor["numext"],
+        emisor["numint"], emisor["colonia"], emisor["cp"], emisor["municipio"], emisor["estado"],
+        f"RFC: {emisor['rfc']}" if emisor["rfc"] else "",
+    ))
+
+    bloque("DESTINATARIO", _lineas_compactas(
+        e["dest_nombre"], e["dest_calle"], e["dest_numext"], e["dest_numint"], e["dest_colonia"],
+        e["dest_cp"], e["dest_municipio"], e["dest_estado"],
+        f"Tel: {e['dest_telefono']}" if e["dest_telefono"] else "",
+    ))
+
+    lineas_envio = []
+    if e["tipo_embarque"] == "propio":
+        lineas_envio = ["Envio propio", f"Chofer: {e['chofer'] or ''}", f"Unidad: {e['unidad'] or ''}"]
+    elif e["tipo_embarque"] == "paqueteria":
+        lineas_envio = [f"Paqueteria: {e['paqueteria'] or ''}", f"Guia: {e['guia'] or ''}"]
+    fecha_emb = (e["fecha_embarque"] or "")[:16].replace("T", " ")
+    if fecha_emb:
+        lineas_envio.append(f"Fecha de embarque: {fecha_emb}")
+    if lineas_envio:
+        bloque("DATOS DE ENVIO", lineas_envio)
+
+    fecha_ent = (e["fecha_entrega"] or "")[:16].replace("T", " ")
+    via_txt = {"qr": "Confirmado desde el QR de la etiqueta", "whatsapp": "Confirmado por WhatsApp"}.get(
+        e["entregado_via"], e["entregado_via"] or "")
+    bloque("ENTREGA", [f"Fecha de entrega: {fecha_ent}", via_txt])
+
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_fill_color(230, 236, 245)
+    pdf.cell(0, 8, "  FIRMA DE QUIEN RECIBE", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(3)
+    firma_ok = False
+    if e["firma_entrega"] and "," in e["firma_entrega"]:
+        try:
+            firma_bytes = base64.b64decode(e["firma_entrega"].split(",", 1)[1])
+            y_firma = pdf.get_y()
+            pdf.image(firma_bytes, x=pdf.l_margin, y=y_firma, w=70)
+            pdf.set_y(y_firma + 35)
+            firma_ok = True
+        except Exception:
+            firma_ok = False
+    if not firma_ok:
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.cell(0, 6, "Sin firma (entrega confirmada por WhatsApp).", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    return bytes(pdf.output())
+
+
+def _comprobante_response(e):
+    if e["estatus"] != "entregado":
+        return jsonify({"ok": False, "error": "Esta etiqueta todavia no ha sido entregada."}), 409
+    emisor = get_emisor(e["empresa_id"])
+    logo = _logo_empresa(e["empresa_id"])
+    pdf_bytes = _comprobante_pdf(e, emisor, logo)
+    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
+    return send_file(
+        io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False,
+        download_name=f"comprobante_{folio_txt}.pdf",
+    )
+
+
+@embarques_bp.route("/entrega/<token>/comprobante.pdf")
+def entrega_comprobante(token):
+    e = embarques_db.obtener_por_token(token)
+    if not e:
+        return jsonify({"ok": False, "error": "Liga invalida."}), 404
+    return _comprobante_response(e)
+
+
+@embarques_bp.route("/embarques/<int:embarque_id>/comprobante.pdf")
+@require_embarques
+def embarque_comprobante(embarque_id):
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    return _comprobante_response(e)

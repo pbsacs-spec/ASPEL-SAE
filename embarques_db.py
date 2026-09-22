@@ -89,6 +89,7 @@ def init_db():
         for columna, tipo in [
             ("token_entrega", "TEXT"), ("fecha_entrega", "TEXT"),
             ("entregado_via", "TEXT"), ("entregado_ref", "TEXT"),
+            ("firma_entrega", "TEXT"),
         ]:
             if columna not in cols:
                 con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} {tipo}")
@@ -286,15 +287,17 @@ def obtener_por_token(token):
         return dict(row) if row else None
 
 
-def marcar_entregado(embarque_id, via, ref):
+def marcar_entregado(embarque_id, via, ref, firma=None):
     """via: 'qr' | 'whatsapp'. ref: IP (qr) o numero de telefono (whatsapp).
+    firma: PNG en base64 (data URI), solo aplica para 'qr' -- por WhatsApp no hay forma
+    de capturar una firma, solo texto.
     Idempotente: si ya estaba entregada, no hace nada y regresa False."""
     with _LOCK, _conn() as con:
         con.execute("""
             UPDATE embarques SET estatus='entregado', fecha_entrega=?,
-                entregado_via=?, entregado_ref=?
+                entregado_via=?, entregado_ref=?, firma_entrega=?
             WHERE id = ? AND estatus != 'entregado'
-        """, (_ahora(), via, ref, embarque_id))
+        """, (_ahora(), via, ref, firma, embarque_id))
         return con.total_changes > 0
 
 
@@ -317,7 +320,7 @@ def reactivar(embarque_id, admin_user, motivo):
         notas_nuevas = f"{row['notas']}\n{nota}" if row["notas"] else nota
         con.execute("""
             UPDATE embarques SET estatus='embarcado', fecha_entrega=NULL,
-                entregado_via=NULL, entregado_ref=NULL, notas=?
+                entregado_via=NULL, entregado_ref=NULL, firma_entrega=NULL, notas=?
             WHERE id = ?
         """, (notas_nuevas, embarque_id))
         return True

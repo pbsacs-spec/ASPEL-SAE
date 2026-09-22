@@ -29,19 +29,24 @@ def _as_date(v):
     return v.date() if isinstance(v, datetime.datetime) else v
 
 
-def _cargos_y_pagos(empresa_id):
-    _, cargos = query("""
+def _cargos_y_pagos(empresa_id, cve_clie=None):
+    """Si cve_clie se da, filtra en SQL a un solo cliente (usado por el detalle);
+    si no, trae todos los clientes (usado por el resumen de cartera)."""
+    filtro = " AND TRIM(CVE_CLIE) = ?" if cve_clie else ""
+    params = [cve_clie] if cve_clie else []
+
+    _, cargos = query(f"""
         SELECT CVE_CLIE, NO_FACTURA, IMPORTE, FECHA_APLI, FECHA_VENC
         FROM CUEN_M01
-        WHERE TIPO_MOV = 'C'
-    """, empresa_id=empresa_id)
+        WHERE TIPO_MOV = 'C'{filtro}
+    """, params, empresa_id=empresa_id)
 
-    _, abonos = query("""
+    _, abonos = query(f"""
         SELECT CVE_CLIE, NO_FACTURA, SUM(IMPORTE), MAX(FECHA_APLI)
         FROM CUEN_DET01
-        WHERE TIPO_MOV = 'A'
+        WHERE TIPO_MOV = 'A'{filtro}
         GROUP BY CVE_CLIE, NO_FACTURA
-    """, empresa_id=empresa_id)
+    """, params, empresa_id=empresa_id)
     pagos = {(c, f): (float(p or 0), u) for c, f, p, u in abonos}
 
     return cargos, pagos
@@ -171,11 +176,9 @@ def detalle(clave):
     hoy = datetime.date.today()
 
     try:
-        cargos, pagos = _cargos_y_pagos(empresa)
+        cargos, pagos = _cargos_y_pagos(empresa, cve_clie=clave)
         facturas = []
         for cve_clie, no_factura, importe, fecha_apli, fecha_venc in cargos:
-            if cve_clie.strip() != clave:
-                continue
             importe = float(importe)
             pagado, ult_pago = pagos.get((cve_clie, no_factura), (0.0, None))
             saldo = round(importe - pagado, 2)

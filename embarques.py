@@ -535,6 +535,33 @@ def _dibujar_total(pdf, cx, y, cw, total):
     pdf.cell(cw - _CANT_W, _ROW_H, "TOTAL", new_x=XPos.LEFT, new_y=YPos.TOP)
 
 
+_FOOTER_H = 7  # mm, franja reservada al pie de cada etiqueta para el dato de embarque
+
+
+def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e):
+    """Pie de pagina con quien se llevo el pedido: chofer/unidad (reparto propio) o
+    paqueteria/guia (recoleccion externa). No se dibuja nada si todavia esta pendiente."""
+    if e["estatus"] != "embarcado":
+        return
+    cx = slot_x + _PAD
+    cw = slot_w - 2 * _PAD
+    y = slot_y + slot_h - _PAD - _FOOTER_H + 1
+
+    if e["tipo_embarque"] == "propio":
+        texto = f"Envio propio  ·  Chofer: {e['chofer'] or ''}  ·  Unidad: {e['unidad'] or ''}"
+    else:
+        texto = f"Paqueteria: {e['paqueteria'] or ''}  ·  Guia: {e['guia'] or ''}"
+    fecha_emb = (e["fecha_embarque"] or "")[:10]
+    if fecha_emb:
+        texto += f"  ·  Embarcado: {fecha_emb}"
+
+    pdf.line(cx, y, cx + cw, y)
+    y += 1.5
+    pdf.set_xy(cx, y)
+    pdf.set_font("Helvetica", "", 7.5)
+    pdf.cell(cw, 4, _truncar(pdf, texto, cw), new_x=XPos.LEFT, new_y=YPos.TOP)
+
+
 @embarques_bp.route("/embarques/<int:embarque_id>/etiqueta.pdf")
 @require_embarques
 def etiqueta_pdf(embarque_id):
@@ -583,9 +610,10 @@ def etiqueta_pdf(embarque_id):
 
     for bulto in range(1, num_bultos + 1):
         y0 = nueva_etiqueta()
-        y_limite = y0 + slot_h - _PAD
+        y_limite = y0 + slot_h - _PAD - _FOOTER_H
         y = _dibujar_encabezado(pdf, margen, y0, slot_w, True, bulto, num_bultos,
                                  folio_txt, fecha, emisor, e, logo)
+        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e)
 
         idx = 0
         primero = True
@@ -594,9 +622,10 @@ def etiqueta_pdf(embarque_id):
         while True:
             if not primero:
                 y0 = nueva_etiqueta()
-                y_limite = y0 + slot_h - _PAD
+                y_limite = y0 + slot_h - _PAD - _FOOTER_H
                 y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                          folio_txt, fecha, emisor, e, logo)
+                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e)
             primero = False
 
             while idx < len(productos) and y + _ROW_H <= y_limite:
@@ -607,9 +636,10 @@ def etiqueta_pdf(embarque_id):
             if idx >= len(productos):
                 if y + _ROW_H + 1 > y_limite:
                     y0 = nueva_etiqueta()
-                    y_limite = y0 + slot_h - _PAD
+                    y_limite = y0 + slot_h - _PAD - _FOOTER_H
                     y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                              folio_txt, fecha, emisor, e, logo)
+                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e)
                 _dibujar_total(pdf, cx, y, cw, total_cant)
                 break
             # quedan productos pero no cupieron mas filas en esta etiqueta: continuar

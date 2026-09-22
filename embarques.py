@@ -282,6 +282,12 @@ def api_embarcar(embarque_id):
         return jsonify({"ok": False, "error": "Indica el chofer."}), 400
     if tipo == "paqueteria" and not (body.get("paqueteria") or "").strip():
         return jsonify({"ok": False, "error": "Indica la paqueteria."}), 400
+    try:
+        num_bultos = int(body.get("num_bultos") or 1)
+        if not (1 <= num_bultos <= 200):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Numero de bultos invalido (1-200)."}), 400
 
     embarque = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
     if not embarque:
@@ -294,30 +300,165 @@ def api_embarcar(embarque_id):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-# ── PDF de la etiqueta ───────────────────────────────────────────────────
+# ── PDF de la etiqueta (media carta, hasta 2 por hoja, 1 etiqueta por bulto) ─
 
-def _linea_direccion(nombre, calle, numext, numint, colonia, cp, municipio, estado, pais, telefono, referencia):
+_PAD = 3       # mm, margen interno de cada etiqueta
+_ROW_H = 5     # mm, alto de cada fila de producto
+_CANT_W = 18   # mm, ancho de la columna Cantidad
+
+
+def _partidas_factura(empresa_id, cve_doc):
+    _, rows = query("""
+        SELECT p.CANT, COALESCE(i.DESCR, p.DESCR_ART) AS DESCR
+        FROM PAR_FACTF01 p
+        LEFT JOIN INVE01 i ON i.CVE_ART = p.CVE_ART
+        WHERE p.CVE_DOC = ?
+        ORDER BY p.NUM_PAR
+    """, [cve_doc], empresa_id=empresa_id)
+    return [{"cantidad": float(c or 0), "descripcion": (d or "").strip()} for c, d in rows]
+
+
+def _lineas_compactas(nombre, calle, numext, numint, colonia, cp, municipio, estado, extra=""):
     lineas = [nombre or "(sin nombre)"]
     calle_txt = calle or ""
     if numext:
         calle_txt += f" {numext}"
     if numint:
-        calle_txt += f" Int. {numint}"
+        calle_txt += f" Int.{numint}"
     if calle_txt.strip():
         lineas.append(calle_txt.strip())
-    if colonia:
-        lineas.append(f"Col. {colonia}")
-    cp_mun = " ".join(x for x in [f"CP {cp}" if cp else "", municipio or ""] if x)
-    if cp_mun:
-        lineas.append(cp_mun)
-    edo_pais = ", ".join(x for x in [estado or "", pais or ""] if x)
-    if edo_pais:
-        lineas.append(edo_pais)
-    if telefono:
-        lineas.append(f"Tel: {telefono}")
-    if referencia:
-        lineas.append(f"Ref: {referencia}")
-    return lineas
+    l2 = ", ".join(x for x in [colonia, f"CP {cp}" if cp else ""] if x)
+    if l2:
+        lineas.append(l2)
+    l3 = ", ".join(x for x in [municipio, estado] if x)
+    if l3:
+        lineas.append(l3)
+    if extra:
+        lineas.append(extra)
+    return lineas[:5]
+
+
+def _pdf_safe(texto):
+    """Los datos de Aspel (nombres, direcciones, descripciones de producto) pueden
+    traer caracteres fuera de Latin-1 (comillas curvas, guiones largos, etc.) que
+    la fuente Helvetica basica de fpdf2 no soporta y hacen fallar la generacion
+    del PDF. Se reemplazan por '?' en vez de tronar la etiqueta completa."""
+    return (texto or "").encode("latin-1", "replace").decode("latin-1")
+
+
+def _truncar(pdf, texto, ancho_mm):
+    texto = _pdf_safe(texto).strip()
+    if pdf.get_string_width(texto) <= ancho_mm:
+        return texto
+    while texto and pdf.get_string_width(texto + "...") > ancho_mm:
+        texto = texto[:-1]
+    return (texto + "...") if texto else ""
+
+
+def _dibujar_encabezado(pdf, slot_x, slot_y, slot_w, completo, bulto, num_bultos,
+                         folio_txt, fecha, emisor, destinatario, logo):
+    """Dibuja el encabezado de una etiqueta (completo, con Emisor/Destinatario, o
+    resumido para una hoja de continuacion). Regresa el y donde debe empezar la
+    tabla de productos."""
+    cx, y = slot_x + _PAD, slot_y + _PAD
+    cw = slot_w - 2 * _PAD
+
+    if not completo:
+        pdf.set_xy(cx, y)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(cw, 5, f"ETIQUETA DE EMBARQUE (continuacion) - Bulto {bulto} de {num_bultos} - Factura {folio_txt}",
+                 new_x=XPos.LEFT, new_y=YPos.TOP)
+        y += 7
+        pdf.dashed_line(cx, y, cx + cw, y, 1, 1)
+        y += 2
+        return _dibujar_fila_productos_header(pdf, cx, y, cw)
+
+    logo_w = 0
+    if logo:
+        try:
+            pdf.image(logo, x=cx, y=y, w=16)
+            logo_w = 19
+        except Exception:
+            pass
+    pdf.set_xy(cx + logo_w, y)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(cw - logo_w, 4.5, "ETIQUETA DE EMBARQUE", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.set_xy(cx + logo_w, y + 4.5)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(cw - logo_w, 4, f"Bulto {bulto} de {num_bultos}  ·  Factura {folio_txt}  ·  {fecha or ''}",
+              new_x=XPos.LEFT, new_y=YPos.TOP)
+    y += 10
+    pdf.dashed_line(cx, y, cx + cw, y, 1, 1)
+    y += 2
+
+    col_w = (cw - 4) / 2
+    col2_x = cx + col_w + 4
+
+    pdf.set_xy(cx, y)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.cell(col_w, 3.5, "EMISOR (remite)", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.set_xy(col2_x, y)
+    pdf.cell(col_w, 3.5, "DESTINATARIO (recibe)", new_x=XPos.LEFT, new_y=YPos.TOP)
+    y_txt = y + 3.5
+
+    extra_emisor = " · ".join(x for x in [
+        f"Tel: {emisor['telefono']}" if emisor["telefono"] else "",
+        f"RFC: {emisor['rfc']}" if emisor["rfc"] else "",
+    ] if x)
+    lineas_emisor = _lineas_compactas(
+        emisor["nombre_empresa"] or "(configura el emisor en /embarques/configuracion)",
+        emisor["calle"], emisor["numext"], emisor["numint"], emisor["colonia"], emisor["cp"],
+        emisor["municipio"], emisor["estado"], extra_emisor,
+    )
+    lineas_dest = _lineas_compactas(
+        destinatario["dest_nombre"], destinatario["dest_calle"], destinatario["dest_numext"],
+        destinatario["dest_numint"], destinatario["dest_colonia"], destinatario["dest_cp"],
+        destinatario["dest_municipio"], destinatario["dest_estado"],
+        f"Tel: {destinatario['dest_telefono']}" if destinatario["dest_telefono"] else "",
+    )
+    for i, linea in enumerate(lineas_emisor):
+        pdf.set_xy(cx, y_txt + i * 3.6)
+        pdf.set_font("Helvetica", "B" if i == 0 else "", 7.5 if i == 0 else 7)
+        pdf.cell(col_w, 3.6, _truncar(pdf, linea, col_w), new_x=XPos.LEFT, new_y=YPos.TOP)
+    for i, linea in enumerate(lineas_dest):
+        pdf.set_xy(col2_x, y_txt + i * 3.6)
+        pdf.set_font("Helvetica", "B" if i == 0 else "", 7.5 if i == 0 else 7)
+        pdf.cell(col_w, 3.6, _truncar(pdf, linea, col_w), new_x=XPos.LEFT, new_y=YPos.TOP)
+
+    y = y_txt + 5 * 3.6 + 2
+    pdf.dashed_line(cx, y, cx + cw, y, 1, 1)
+    y += 2
+    return _dibujar_fila_productos_header(pdf, cx, y, cw)
+
+
+def _dibujar_fila_productos_header(pdf, cx, y, cw):
+    pdf.set_xy(cx, y)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(_CANT_W, _ROW_H, "Cant.", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.set_xy(cx + _CANT_W, y)
+    pdf.cell(cw - _CANT_W, _ROW_H, "Descripcion", new_x=XPos.LEFT, new_y=YPos.TOP)
+    y += _ROW_H
+    pdf.line(cx, y, cx + cw, y)
+    return y + 1
+
+
+def _dibujar_fila_producto(pdf, cx, y, cw, producto):
+    pdf.set_xy(cx, y)
+    pdf.set_font("Helvetica", "", 7.5)
+    pdf.cell(_CANT_W, _ROW_H, f"{producto['cantidad']:g}", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.set_xy(cx + _CANT_W, y)
+    pdf.cell(cw - _CANT_W, _ROW_H, _truncar(pdf, producto["descripcion"], cw - _CANT_W - 1),
+              new_x=XPos.LEFT, new_y=YPos.TOP)
+
+
+def _dibujar_total(pdf, cx, y, cw, total):
+    pdf.line(cx, y, cx + cw, y)
+    y += 1
+    pdf.set_xy(cx, y)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(_CANT_W, _ROW_H, f"{total:g}", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.set_xy(cx + _CANT_W, y)
+    pdf.cell(cw - _CANT_W, _ROW_H, "TOTAL", new_x=XPos.LEFT, new_y=YPos.TOP)
 
 
 @embarques_bp.route("/embarques/<int:embarque_id>/etiqueta.pdf")
@@ -329,64 +470,75 @@ def etiqueta_pdf(embarque_id):
         return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
 
     emisor = get_emisor(empresa)
+    logo = _logo_empresa(empresa)
+    folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
+    fecha = e["fecha_creacion"][:10]
+    num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
+
+    try:
+        productos = _partidas_factura(empresa, e["factura_cve_doc"])
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)}), 500
+    total_cant = sum(p["cantidad"] for p in productos)
 
     pdf = FPDF(orientation="P", unit="mm", format="Letter")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_margin(15)
+    pdf.set_auto_page_break(False)
 
-    logo = _logo_empresa(empresa)
-    if logo:
-        try:
-            info = pdf.image(logo, x=Align.C, y=10, w=32)
-            pdf.set_y(10 + info.rendered_height + 4)
-        except Exception:
-            logo = None
-    if not logo:
-        pdf.set_y(12)
+    margen, gap = 10, 6
+    slot_w = pdf.w - 2 * margen
+    slot_h = (pdf.h - 2 * margen - gap) / 2
+    slots_y = [margen, margen + slot_h + gap]
 
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 12, "ETIQUETA DE EMBARQUE", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    estado_pagina = {"slot": 2, "total": 0}
 
-    pdf.set_font("Helvetica", "", 11)
-    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
-    pdf.cell(0, 8, f"Factura: {folio_txt}    Fecha de creacion: {e['fecha_creacion'][:10]}",
-             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(6)
+    def nueva_etiqueta():
+        estado_pagina["total"] += 1
+        if estado_pagina["total"] > 1000:
+            # Salvaguarda: nunca deberiamos llegar aqui con la geometria actual;
+            # evita generar un PDF descontrolado si algun calculo de espacio fallara.
+            raise RuntimeError("La etiqueta genero demasiadas paginas; revisa el numero de bultos o los productos de la factura.")
+        if estado_pagina["slot"] >= 2:
+            pdf.add_page()
+            estado_pagina["slot"] = 0
+        y0 = slots_y[estado_pagina["slot"]]
+        estado_pagina["slot"] += 1
+        pdf.set_draw_color(180, 180, 180)
+        pdf.rect(margen, y0, slot_w, slot_h)
+        pdf.set_draw_color(0, 0, 0)
+        return y0
 
-    def bloque(titulo, lineas):
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_fill_color(230, 236, 245)
-        pdf.cell(0, 9, f"  {titulo}", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.set_font("Helvetica", "", 12)
-        pdf.ln(2)
-        for i, linea in enumerate(lineas):
-            pdf.set_font("Helvetica", "B" if i == 0 else "", 12 if i == 0 else 11)
-            pdf.multi_cell(0, 7, linea, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.ln(6)
+    for bulto in range(1, num_bultos + 1):
+        y0 = nueva_etiqueta()
+        y_limite = y0 + slot_h - _PAD
+        y = _dibujar_encabezado(pdf, margen, y0, slot_w, True, bulto, num_bultos,
+                                 folio_txt, fecha, emisor, e, logo)
 
-    lineas_emisor = _linea_direccion(
-        emisor["nombre_empresa"] or "(configura el emisor en /embarques/configuracion)",
-        emisor["calle"], emisor["numext"], emisor["numint"], emisor["colonia"], emisor["cp"],
-        emisor["municipio"], emisor["estado"], emisor["pais"], emisor["telefono"], "",
-    )
-    if emisor["rfc"]:
-        lineas_emisor.append(f"RFC: {emisor['rfc']}")
-    bloque("EMISOR (remite)", lineas_emisor)
+        idx = 0
+        primero = True
+        cw = slot_w - 2 * _PAD
+        cx = margen + _PAD
+        while True:
+            if not primero:
+                y0 = nueva_etiqueta()
+                y_limite = y0 + slot_h - _PAD
+                y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
+                                         folio_txt, fecha, emisor, e, logo)
+            primero = False
 
-    bloque("DESTINATARIO (recibe)", _linea_direccion(
-        e["dest_nombre"], e["dest_calle"], e["dest_numext"], e["dest_numint"], e["dest_colonia"],
-        e["dest_cp"], e["dest_municipio"], e["dest_estado"], e["dest_pais"], e["dest_telefono"],
-        e["dest_referencia"],
-    ))
+            while idx < len(productos) and y + _ROW_H <= y_limite:
+                _dibujar_fila_producto(pdf, cx, y, cw, productos[idx])
+                y += _ROW_H
+                idx += 1
 
-    if e["estatus"] == "embarcado":
-        if e["tipo_embarque"] == "propio":
-            lineas = [f"Envio propio", f"Chofer: {e['chofer'] or ''}", f"Unidad: {e['unidad'] or ''}"]
-        else:
-            lineas = [f"Paqueteria", f"Empresa: {e['paqueteria'] or ''}", f"Guia: {e['guia'] or ''}"]
-        lineas.append(f"Fecha de embarque: {(e['fecha_embarque'] or '')[:10]}")
-        bloque("DATOS DE EMBARQUE", lineas)
+            if idx >= len(productos):
+                if y + _ROW_H + 1 > y_limite:
+                    y0 = nueva_etiqueta()
+                    y_limite = y0 + slot_h - _PAD
+                    y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
+                                             folio_txt, fecha, emisor, e, logo)
+                _dibujar_total(pdf, cx, y, cw, total_cant)
+                break
+            # quedan productos pero no cupieron mas filas en esta etiqueta: continuar
 
     pdf_bytes = bytes(pdf.output())
     return send_file(

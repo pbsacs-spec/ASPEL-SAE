@@ -209,6 +209,7 @@
         embarqueTxt = f.tipo_embarque === 'propio'
           ? `Propio: ${escH(f.chofer || '')} / ${escH(f.unidad || '')}`
           : `${escH(f.paqueteria || '')} (guia ${escH(f.guia || '')})`;
+        if (f.num_bultos > 1) embarqueTxt += ` &middot; ${f.num_bultos} bultos`;
       }
       html += `<tr>
         <td><strong>${escH(folio)}</strong></td>
@@ -249,6 +250,12 @@
         <input type="text" id="m-guia">
       </div>
 
+      <label>Numero de bultos / cajas</label>
+      <input type="text" inputmode="numeric" id="m-bultos" value="1">
+      <div style="font-size:.76rem;color:#888;margin-top:4px;">
+        Se imprime una etiqueta por bulto (todas con la misma lista de productos).
+      </div>
+
       <div class="modal-err" id="m-error"></div>
 
       <div style="margin-top:16px; display:flex; gap:8px;">
@@ -275,6 +282,7 @@
       body.paqueteria = document.getElementById('m-paqueteria').value.trim();
       body.guia = document.getElementById('m-guia').value.trim();
     }
+    body.num_bultos = parseInt(document.getElementById('m-bultos').value, 10) || 1;
 
     const empresa = empresaActual();
     const p = new URLSearchParams();

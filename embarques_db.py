@@ -71,13 +71,18 @@ def init_db():
                 fecha_creacion   TEXT NOT NULL,
                 creado_por       TEXT NOT NULL,
                 fecha_embarque   TEXT,
-                embarcado_por    TEXT
+                embarcado_por    TEXT,
+                num_bultos       INTEGER NOT NULL DEFAULT 1
             )
         """)
         con.execute("""
             CREATE INDEX IF NOT EXISTS idx_embarques_factura
             ON embarques (empresa_id, factura_cve_doc)
         """)
+        # Migracion: bases creadas antes de agregar num_bultos.
+        cols = [r["name"] for r in con.execute("PRAGMA table_info(embarques)").fetchall()]
+        if "num_bultos" not in cols:
+            con.execute("ALTER TABLE embarques ADD COLUMN num_bultos INTEGER NOT NULL DEFAULT 1")
 
 
 init_db()
@@ -150,20 +155,22 @@ def obtener_embarque(embarque_id, empresa_id=None):
 
 
 def marcar_embarcado(embarque_id, tipo_embarque, datos, usuario):
-    """tipo_embarque: 'propio' (datos: chofer, unidad) o 'paqueteria' (datos: paqueteria, guia)."""
+    """tipo_embarque: 'propio' (datos: chofer, unidad) o 'paqueteria' (datos: paqueteria, guia).
+    datos puede incluir num_bultos (cuantas etiquetas/cajas fisicas se imprimen)."""
+    num_bultos = max(1, int(datos.get("num_bultos") or 1))
     with _LOCK, _conn() as con:
         if tipo_embarque == "propio":
             con.execute("""
                 UPDATE embarques SET estatus='embarcado', tipo_embarque='propio',
                     chofer=?, unidad=?, paqueteria=NULL, guia=NULL,
-                    fecha_embarque=?, embarcado_por=?
+                    num_bultos=?, fecha_embarque=?, embarcado_por=?
                 WHERE id = ?
-            """, (datos.get("chofer", ""), datos.get("unidad", ""), _ahora(), usuario, embarque_id))
+            """, (datos.get("chofer", ""), datos.get("unidad", ""), num_bultos, _ahora(), usuario, embarque_id))
         else:
             con.execute("""
                 UPDATE embarques SET estatus='embarcado', tipo_embarque='paqueteria',
                     chofer=NULL, unidad=NULL, paqueteria=?, guia=?,
-                    fecha_embarque=?, embarcado_por=?
+                    num_bultos=?, fecha_embarque=?, embarcado_por=?
                 WHERE id = ?
-            """, (datos.get("paqueteria", ""), datos.get("guia", ""), _ahora(), usuario, embarque_id))
+            """, (datos.get("paqueteria", ""), datos.get("guia", ""), num_bultos, _ahora(), usuario, embarque_id))
         return con.total_changes > 0

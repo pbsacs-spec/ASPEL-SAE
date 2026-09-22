@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirmar entrega</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;
+    }
+    .card {
+      background: #fff; border-radius: 14px; box-shadow: 0 2px 10px rgba(0,0,0,.1);
+      width: 100%; max-width: 380px; padding: 28px 24px; text-align: center;
+    }
+    h1 { font-size: 1.15rem; color: #1a3a5c; margin-bottom: 6px; }
+    .sub { font-size: .85rem; color: #777; margin-bottom: 20px; }
+
+    .info { text-align: left; background: #f7f9fc; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; }
+    .info .nombre { font-weight: 700; color: #1a3a5c; font-size: 1rem; margin-bottom: 3px; }
+    .info .dato { font-size: .85rem; color: #555; margin-top: 2px; }
+
+    .btn {
+      width: 100%; padding: 14px; border: none; border-radius: 10px;
+      font-size: 1rem; font-weight: 700; cursor: pointer; background: #1a7f3c; color: #fff;
+    }
+    .btn:hover { opacity: .9; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .icono { font-size: 2.6rem; margin-bottom: 10px; }
+    .msg-ok { color: #1a7f3c; font-weight: 600; }
+    .msg-err { color: #b02020; font-weight: 600; }
+    .hint { font-size: .78rem; color: #999; margin-top: 16px; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+{% if not encontrada %}
+  <div class="icono">⚠️</div>
+  <h1>Liga no valida</h1>
+  <p class="sub">Este enlace de confirmacion de entrega no existe o ya no es valido.</p>
+
+{% elif ya_entregada %}
+  <div class="icono">✅</div>
+  <h1>Entrega ya confirmada</h1>
+  <div class="info">
+    <div class="nombre">{{ e.dest_nombre }}</div>
+    <div class="dato">Factura {{ folio_txt }}</div>
+    <div class="dato">Confirmada el {{ e.fecha_entrega[:16].replace('T', ' ') if e.fecha_entrega else '' }}</div>
+  </div>
+  <p class="sub">No es necesario hacer nada mas.</p>
+
+{% else %}
+  <h1>Confirmar entrega</h1>
+  <p class="sub">Factura {{ folio_txt }}</p>
+  <div class="info">
+    <div class="nombre">{{ e.dest_nombre }}</div>
+    {% if e.dest_calle %}<div class="dato">{{ e.dest_calle }} {{ e.dest_numext }}</div>{% endif %}
+    {% if e.dest_colonia %}<div class="dato">{{ e.dest_colonia }}{% if e.dest_cp %}, CP {{ e.dest_cp }}{% endif %}</div>{% endif %}
+    {% if e.dest_municipio or e.dest_estado %}<div class="dato">{{ e.dest_municipio }}{% if e.dest_estado %}, {{ e.dest_estado }}{% endif %}</div>{% endif %}
+  </div>
+  <button class="btn" id="btnConfirmar" onclick="confirmar()">Confirmar entrega</button>
+  <div id="resultado" style="margin-top:16px;"></div>
+  <p class="hint">Se registrara la fecha y hora en que confirmes.</p>
+{% endif %}
+</div>
+
+{% if encontrada and not ya_entregada %}
+<script>
+  async function confirmar() {
+    const btn = document.getElementById('btnConfirmar');
+    const res = document.getElementById('resultado');
+    btn.disabled = true;
+    btn.textContent = 'Confirmando...';
+    try {
+      const r = await fetch(window.location.pathname + '/confirmar', { method: 'POST' }).then(r => r.json());
+      if (r.ok) {
+        document.querySelector('.card').innerHTML =
+          '<div class="icono">✅</div><h1>Entrega confirmada</h1><p class="msg-ok">Gracias, quedo registrada la hora de entrega.</p>';
+      } else {
+        res.innerHTML = `<p class="msg-err">${r.error || 'No se pudo confirmar.'}</p>`;
+        btn.disabled = false;
+        btn.textContent = 'Confirmar entrega';
+      }
+    } catch (e) {
+      res.innerHTML = '<p class="msg-err">Error de conexion. Intenta de nuevo.</p>';
+      btn.disabled = false;
+      btn.textContent = 'Confirmar entrega';
+    }
+  }
+</script>
+{% endif %}
+
+</body>
+</html>

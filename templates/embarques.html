@@ -49,6 +49,8 @@
     .badge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: .72rem; font-weight: 600; }
     .badge-pendiente { background: #fff3d6; color: #8a6200; }
     .badge-embarcado { background: #eafaf1; color: #1e8449; }
+    .badge-entregado { background: #1a7f3c; color: #fff; }
+    .txt-muted { color: #aaa; font-size: .78rem; }
 
     .table-scroll { overflow-x: auto; }
     .empty { text-align: center; color: #999; padding: 40px; font-size: .9rem; }
@@ -145,6 +147,7 @@
 </div>
 
 <script>
+  const ES_ADMIN = {{ 'true' if es_admin else 'false' }};
   let filas = [];
 
   const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -254,25 +257,40 @@
     let html = `<table><thead><tr>
       <th>Factura</th><th>Destinatario</th><th>Creado</th><th>Estatus</th><th>Embarque</th><th>Acciones</th>
     </tr></thead><tbody>`;
+    const ESTATUS_LABEL = { pendiente: 'Pendiente', embarcado: 'Embarcado', entregado: 'Entregado' };
     filas.forEach(f => {
       const folio = `${f.factura_serie || ''}${f.factura_folio || ''}`;
       let embarqueTxt = '&mdash;';
-      if (f.estatus === 'embarcado') {
+      if (f.estatus === 'embarcado' || f.estatus === 'entregado') {
         embarqueTxt = f.tipo_embarque === 'propio'
           ? `Propio: ${escH(f.chofer || '')} / ${escH(f.unidad || '')}`
           : `${escH(f.paqueteria || '')} (guia ${escH(f.guia || '')})`;
         if (f.num_bultos > 1) embarqueTxt += ` &middot; ${f.num_bultos} bultos`;
       }
+      if (f.estatus === 'entregado' && f.fecha_entrega) {
+        embarqueTxt += `<br><span class="txt-muted">Entregado ${escH(f.fecha_entrega.slice(0, 16).replace('T', ' '))} (${escH(f.entregado_via || '')})</span>`;
+      }
+
+      let acciones;
+      if (f.estatus === 'entregado') {
+        acciones = '<span class="txt-muted">Etiqueta bloqueada</span>';
+        if (ES_ADMIN) {
+          acciones += ` <button class="btn btn-sm btn-secondary" onclick="reactivar(${f.id}, '${escA(folio)}')">Reactivar</button>`;
+        }
+      } else {
+        acciones = `
+          <a class="btn btn-sm btn-secondary" href="/embarques/${f.id}/etiqueta.pdf?empresa=${encodeURIComponent(empresaActual())}" target="_blank">Etiqueta</a>
+          <button class="btn btn-sm" onclick="abrirEmbarcar(${f.id})">${f.estatus === 'pendiente' ? 'Marcar embarcado' : 'Editar embarque'}</button>
+        `;
+      }
+
       html += `<tr>
         <td><strong>${escH(folio)}</strong></td>
         <td>${escH(f.dest_nombre)}</td>
         <td>${(f.fecha_creacion || '').slice(0, 10)}</td>
-        <td><span class="badge badge-${f.estatus}">${f.estatus === 'pendiente' ? 'Pendiente' : 'Embarcado'}</span></td>
+        <td><span class="badge badge-${f.estatus}">${ESTATUS_LABEL[f.estatus] || f.estatus}</span></td>
         <td>${embarqueTxt}</td>
-        <td>
-          <a class="btn btn-sm btn-secondary" href="/embarques/${f.id}/etiqueta.pdf?empresa=${encodeURIComponent(empresaActual())}" target="_blank">Etiqueta</a>
-          <button class="btn btn-sm" onclick="abrirEmbarcar(${f.id})">${f.estatus === 'pendiente' ? 'Marcar embarcado' : 'Editar embarque'}</button>
-        </td>
+        <td>${acciones}</td>
       </tr>`;
     });
     html += '</tbody></table>';
@@ -385,6 +403,28 @@
 
   function cerrarModal(e) {
     if (!e || e.target.id === 'overlay') document.getElementById('overlay').classList.remove('show');
+  }
+
+  async function reactivar(id, folio) {
+    const motivo = prompt(`Motivo para reactivar la etiqueta ${folio} (obligatorio, ej. "se perdio la etiqueta impresa"):`);
+    if (motivo === null) return;
+    if (!motivo.trim()) { alert('Debes indicar un motivo.'); return; }
+
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+
+    try {
+      const res = await fetch(`/api/embarques/${id}/reactivar?` + p, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ motivo: motivo.trim() }),
+      }).then(r => r.json());
+      if (!res.ok) { alert(res.error); return; }
+      cargar();
+    } catch (e) {
+      alert('Error de conexion: ' + e.message);
+    }
   }
 </script>
 

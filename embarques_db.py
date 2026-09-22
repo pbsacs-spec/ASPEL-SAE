@@ -5,6 +5,7 @@ facturas de Aspel SAE. No toca ninguna tabla de Aspel: es dato propio de esta ap
 import contextlib
 import datetime
 import os
+import secrets
 import sqlite3
 import threading
 
@@ -83,6 +84,27 @@ def init_db():
         cols = [r["name"] for r in con.execute("PRAGMA table_info(embarques)").fetchall()]
         if "num_bultos" not in cols:
             con.execute("ALTER TABLE embarques ADD COLUMN num_bultos INTEGER NOT NULL DEFAULT 1")
+
+        # Migracion: confirmacion de entrega (QR / WhatsApp).
+        for columna, tipo in [
+            ("token_entrega", "TEXT"), ("fecha_entrega", "TEXT"),
+            ("entregado_via", "TEXT"), ("entregado_ref", "TEXT"),
+        ]:
+            if columna not in cols:
+                con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} {tipo}")
+        con.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_embarques_token
+            ON embarques (token_entrega)
+        """)
+        # Backfill: etiquetas creadas antes de este cambio no tienen token todavia.
+        sin_token = con.execute(
+            "SELECT id FROM embarques WHERE token_entrega IS NULL"
+        ).fetchall()
+        for row in sin_token:
+            con.execute(
+                "UPDATE embarques SET token_entrega = ? WHERE id = ?",
+                (secrets.token_urlsafe(24), row["id"]),
+            )
 
         con.execute("""
             CREATE TABLE IF NOT EXISTS catalogo (
@@ -166,6 +188,7 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
         estatus, chofer, unidad, paqueteria, guia = "pendiente", None, None, None, None
         fecha_embarque, embarcado_por = None, None
     num_bultos = max(1, min(200, int(info.get("num_bultos") or 1)))
+    token_entrega = secrets.token_urlsafe(24)
 
     with _LOCK, _conn() as con:
         cur = con.execute(f"""
@@ -174,15 +197,15 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
                 cliente_clave, cliente_nombre,
                 {", ".join(_CAMPOS_DEST)},
                 estatus, tipo_embarque, chofer, unidad, paqueteria, guia, num_bultos,
-                fecha_creacion, creado_por, fecha_embarque, embarcado_por
+                fecha_creacion, creado_por, fecha_embarque, embarcado_por, token_entrega
             ) VALUES (?, ?, ?, ?, ?, ?, {", ".join("?" for _ in _CAMPOS_DEST)},
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             empresa_id, factura["cve_doc"], factura.get("serie"), factura.get("folio"),
             factura.get("cliente_clave"), factura.get("cliente_nombre"),
             *[destinatario.get(c[len("dest_"):], "") for c in _CAMPOS_DEST],
             estatus, tipo, chofer, unidad, paqueteria, guia, num_bultos,
-            _ahora(), creado_por, fecha_embarque, embarcado_por,
+            _ahora(), creado_por, fecha_embarque, embarcado_por, token_entrega,
         ))
         embarque_id = cur.lastrowid
 
@@ -226,7 +249,9 @@ def marcar_embarcado(embarque_id, tipo_embarque, datos, usuario):
     """tipo_embarque: 'propio' (datos: chofer, unidad) o 'paqueteria' (datos: paqueteria, guia).
     datos puede incluir num_bultos (cuantas etiquetas/cajas fisicas se imprimen).
     Sirve tanto para marcar por primera vez como para editar despues: fecha_embarque
-    y embarcado_por solo se fijan la primera vez (COALESCE), no se pisan en ediciones."""
+    y embarcado_por solo se fijan la primera vez (COALESCE), no se pisan en ediciones.
+    No aplica nada (regresa False) si la etiqueta ya fue entregada -- hay que
+    reactivarla primero."""
     num_bultos = max(1, min(200, int(datos.get("num_bultos") or 1)))
     with _LOCK, _conn() as con:
         if tipo_embarque == "propio":
@@ -235,7 +260,7 @@ def marcar_embarcado(embarque_id, tipo_embarque, datos, usuario):
                     chofer=?, unidad=?, paqueteria=NULL, guia=NULL, num_bultos=?,
                     fecha_embarque=COALESCE(fecha_embarque, ?),
                     embarcado_por=COALESCE(embarcado_por, ?)
-                WHERE id = ?
+                WHERE id = ? AND estatus != 'entregado'
             """, (datos.get("chofer", ""), datos.get("unidad", ""), num_bultos, _ahora(), usuario, embarque_id))
         else:
             con.execute("""
@@ -243,9 +268,67 @@ def marcar_embarcado(embarque_id, tipo_embarque, datos, usuario):
                     chofer=NULL, unidad=NULL, paqueteria=?, guia=?, num_bultos=?,
                     fecha_embarque=COALESCE(fecha_embarque, ?),
                     embarcado_por=COALESCE(embarcado_por, ?)
-                WHERE id = ?
+                WHERE id = ? AND estatus != 'entregado'
             """, (datos.get("paqueteria", ""), datos.get("guia", ""), num_bultos, _ahora(), usuario, embarque_id))
         cambios = con.total_changes > 0
     if cambios:
         _aprender_catalogo(tipo_embarque, datos)
     return cambios
+
+
+def obtener_por_token(token):
+    if not token:
+        return None
+    with _conn() as con:
+        row = con.execute(
+            "SELECT * FROM embarques WHERE token_entrega = ?", (token,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def marcar_entregado(embarque_id, via, ref):
+    """via: 'qr' | 'whatsapp'. ref: IP (qr) o numero de telefono (whatsapp).
+    Idempotente: si ya estaba entregada, no hace nada y regresa False."""
+    with _LOCK, _conn() as con:
+        con.execute("""
+            UPDATE embarques SET estatus='entregado', fecha_entrega=?,
+                entregado_via=?, entregado_ref=?
+            WHERE id = ? AND estatus != 'entregado'
+        """, (_ahora(), via, ref, embarque_id))
+        return con.total_changes > 0
+
+
+def reactivar(embarque_id, admin_user, motivo):
+    """Solo tiene efecto si la etiqueta esta 'entregado'. Regresa a 'embarcado'
+    (conserva chofer/unidad o paqueteria/guia), limpia los datos de entrega y deja
+    registro del motivo en `notas` (no se pisa lo que ya hubiera en notas)."""
+    with _LOCK, _conn() as con:
+        row = con.execute(
+            "SELECT notas, fecha_entrega FROM embarques WHERE id = ? AND estatus = 'entregado'",
+            (embarque_id,),
+        ).fetchone()
+        if not row:
+            return False
+        nota = (
+            f"[{_ahora()[:16].replace('T', ' ')}] Reactivada por {admin_user} "
+            f"(entrega original: {(row['fecha_entrega'] or '')[:16].replace('T', ' ')}) "
+            f"-- motivo: {motivo}"
+        )
+        notas_nuevas = f"{row['notas']}\n{nota}" if row["notas"] else nota
+        con.execute("""
+            UPDATE embarques SET estatus='embarcado', fecha_entrega=NULL,
+                entregado_via=NULL, entregado_ref=NULL, notas=?
+            WHERE id = ?
+        """, (notas_nuevas, embarque_id))
+        return True
+
+
+def buscar_por_folio(empresa_id, folio):
+    """La etiqueta mas reciente de esta empresa con ese folio de factura (para el
+    comando de WhatsApp 'entregado <folio>')."""
+    with _conn() as con:
+        row = con.execute("""
+            SELECT * FROM embarques WHERE empresa_id = ? AND factura_folio = ?
+            ORDER BY id DESC LIMIT 1
+        """, (empresa_id, folio)).fetchone()
+        return dict(row) if row else None

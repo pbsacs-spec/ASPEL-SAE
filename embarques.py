@@ -11,6 +11,7 @@ import io
 import os
 import threading
 
+import qrcode
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g, send_file
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos, Align
@@ -21,6 +22,7 @@ import embarques_db
 
 embarques_bp = Blueprint("embarques", __name__)
 require_embarques = require_roles("administradores", "admin", realm="Aspel Inventario")
+require_admin_embarques = require_roles("admin", realm="Aspel Inventario")
 
 _CFG_FILE = os.path.join(os.path.dirname(__file__), "embarque_config.ini")
 _LOCK = threading.Lock()
@@ -272,6 +274,29 @@ def pagina_configuracion():
     )
 
 
+# ── Confirmacion de entrega (publica, sin login -- el chofer no tiene cuenta) ─
+
+@embarques_bp.route("/entrega/<token>")
+def entrega_pagina(token):
+    e = embarques_db.obtener_por_token(token)
+    if not e:
+        return render_template("entrega_confirmar.html", encontrada=False), 404
+    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
+    return render_template(
+        "entrega_confirmar.html", encontrada=True, e=e, folio_txt=folio_txt,
+        ya_entregada=(e["estatus"] == "entregado"),
+    )
+
+
+@embarques_bp.route("/entrega/<token>/confirmar", methods=["POST"])
+def entrega_confirmar(token):
+    e = embarques_db.obtener_por_token(token)
+    if not e:
+        return jsonify({"ok": False, "error": "Liga invalida."}), 404
+    ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr)
+    return jsonify({"ok": True, "nuevo": ok})
+
+
 # ── API de embarques ─────────────────────────────────────────────────────
 
 @embarques_bp.route("/api/embarques")
@@ -366,9 +391,33 @@ def api_embarcar(embarque_id):
     embarque = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
     if not embarque:
         return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    if embarque["estatus"] == "entregado":
+        return jsonify({"ok": False, "error": "Esta etiqueta ya fue entregada. Un admin debe reactivarla primero."}), 409
 
     try:
         embarques_db.marcar_embarcado(embarque_id, embarque_info["tipo_embarque"], embarque_info, g.username)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@embarques_bp.route("/api/embarques/<int:embarque_id>/reactivar", methods=["POST"])
+@require_admin_embarques
+def api_reactivar(embarque_id):
+    empresa = _empresa_actual()
+    body = request.get_json(silent=True) or {}
+    motivo = (body.get("motivo") or "").strip()
+    if not motivo:
+        return jsonify({"ok": False, "error": "Indica el motivo de la reactivacion."}), 400
+
+    embarque = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not embarque:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+
+    try:
+        ok = embarques_db.reactivar(embarque_id, g.username, motivo)
+        if not ok:
+            return jsonify({"ok": False, "error": "Esta etiqueta no esta entregada, no hay nada que reactivar."}), 409
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -535,31 +584,51 @@ def _dibujar_total(pdf, cx, y, cw, total):
     pdf.cell(cw - _CANT_W, _ROW_H, "TOTAL", new_x=XPos.LEFT, new_y=YPos.TOP)
 
 
-_FOOTER_H = 7  # mm, franja reservada al pie de cada etiqueta para el dato de embarque
+_FOOTER_H = 24  # mm, franja al pie de cada etiqueta: dato de embarque + QR de entrega
+_QR_SIZE = 18   # mm
 
 
-def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e):
-    """Pie de pagina con quien se llevo el pedido: chofer/unidad (reparto propio) o
-    paqueteria/guia (recoleccion externa). No se dibuja nada si todavia esta pendiente."""
-    if e["estatus"] != "embarcado":
-        return
+def _qr_png(data):
+    img = qrcode.make(data, box_size=6, border=1)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
+    """Pie de pagina: a la derecha el QR para que el chofer confirme la entrega desde
+    su celular; a la izquierda, si ya esta embarcada, el chofer/unidad o paqueteria/guia."""
     cx = slot_x + _PAD
     cw = slot_w - 2 * _PAD
-    y = slot_y + slot_h - _PAD - _FOOTER_H + 1
+    y_top = slot_y + slot_h - _PAD - _FOOTER_H + 1
+    pdf.line(cx, y_top, cx + cw, y_top)
 
-    if e["tipo_embarque"] == "propio":
-        texto = f"Envio propio  ·  Chofer: {e['chofer'] or ''}  ·  Unidad: {e['unidad'] or ''}"
-    else:
-        texto = f"Paqueteria: {e['paqueteria'] or ''}  ·  Guia: {e['guia'] or ''}"
-    fecha_emb = (e["fecha_embarque"] or "")[:10]
-    if fecha_emb:
-        texto += f"  ·  Embarcado: {fecha_emb}"
+    if qr_png:
+        qr_x = cx + cw - _QR_SIZE
+        qr_y = y_top + 1.5
+        try:
+            pdf.image(qr_png, x=qr_x, y=qr_y, w=_QR_SIZE, h=_QR_SIZE)
+            pdf.set_xy(qr_x, qr_y + _QR_SIZE + 0.5)
+            pdf.set_font("Helvetica", "", 6)
+            pdf.cell(_QR_SIZE, 3, "Confirmar entrega", align="C", new_x=XPos.LEFT, new_y=YPos.TOP)
+        except Exception:
+            pass
 
-    pdf.line(cx, y, cx + cw, y)
-    y += 1.5
-    pdf.set_xy(cx, y)
-    pdf.set_font("Helvetica", "", 7.5)
-    pdf.cell(cw, 4, _truncar(pdf, texto, cw), new_x=XPos.LEFT, new_y=YPos.TOP)
+    texto_w = cw - _QR_SIZE - 3
+    if e["estatus"] == "embarcado":
+        if e["tipo_embarque"] == "propio":
+            lineas = ["Envio propio", f"Chofer: {e['chofer'] or ''}", f"Unidad: {e['unidad'] or ''}"]
+        else:
+            lineas = [f"Paqueteria: {e['paqueteria'] or ''}", f"Guia: {e['guia'] or ''}"]
+        fecha_emb = (e["fecha_embarque"] or "")[:10]
+        if fecha_emb:
+            lineas.append(f"Embarcado: {fecha_emb}")
+        pdf.set_font("Helvetica", "", 7.5)
+        yy = y_top + 1.5
+        for linea in lineas:
+            pdf.set_xy(cx, yy)
+            pdf.cell(texto_w, 3.8, _truncar(pdf, linea, texto_w), new_x=XPos.LEFT, new_y=YPos.TOP)
+            yy += 3.8
 
 
 @embarques_bp.route("/embarques/<int:embarque_id>/etiqueta.pdf")
@@ -569,12 +638,20 @@ def etiqueta_pdf(embarque_id):
     e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
     if not e:
         return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    if e["estatus"] == "entregado":
+        return jsonify({
+            "ok": False,
+            "error": "Esta etiqueta ya fue entregada y esta bloqueada para reimprimir. "
+                     "Si se perdio la etiqueta impresa, pide a un administrador que la reactive.",
+        }), 409
 
     emisor = get_emisor(empresa)
     logo = _logo_empresa(empresa)
     folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
     fecha = e["fecha_creacion"][:10]
     num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
+    url_entrega = request.url_root.rstrip("/") + "/entrega/" + e["token_entrega"]
+    qr_png = _qr_png(url_entrega)
 
     try:
         productos = _partidas_factura(empresa, e["factura_cve_doc"])
@@ -613,7 +690,7 @@ def etiqueta_pdf(embarque_id):
         y_limite = y0 + slot_h - _PAD - _FOOTER_H
         y = _dibujar_encabezado(pdf, margen, y0, slot_w, True, bulto, num_bultos,
                                  folio_txt, fecha, emisor, e, logo)
-        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e)
+        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
 
         idx = 0
         primero = True
@@ -625,7 +702,7 @@ def etiqueta_pdf(embarque_id):
                 y_limite = y0 + slot_h - _PAD - _FOOTER_H
                 y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                          folio_txt, fecha, emisor, e, logo)
-                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e)
+                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
             primero = False
 
             while idx < len(productos) and y + _ROW_H <= y_limite:
@@ -639,7 +716,7 @@ def etiqueta_pdf(embarque_id):
                     y_limite = y0 + slot_h - _PAD - _FOOTER_H
                     y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                              folio_txt, fecha, emisor, e, logo)
-                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e)
+                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
                 _dibujar_total(pdf, cx, y, cw, total_cant)
                 break
             # quedan productos pero no cupieron mas filas en esta etiqueta: continuar

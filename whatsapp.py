@@ -12,6 +12,7 @@ Comandos:
   pdf buscar TEXTO   — resultados de busqueda en PDF
   excel CLAVE        — ficha del producto en Excel
   excel buscar TEXTO — resultados de busqueda en Excel
+  entregado FOLIO    — registra la entrega de una etiqueta de embarque
   ayuda              — lista de comandos
 """
 import base64
@@ -25,6 +26,7 @@ from flask import Blueprint, request, jsonify, render_template, redirect, url_fo
 
 from db import existencias_producto, buscar_productos, load_empresas
 from auth import require_admin
+import embarques_db
 
 wa_bp = Blueprint("whatsapp", __name__)
 CFG_FILE = os.path.join(os.path.dirname(__file__), "wa_config.ini")
@@ -166,6 +168,9 @@ def _procesar(texto, empresa_id=None, remitente=None):
     if cmd in ("pdf", "excel"):
         return _cmd_archivo(cmd, arg, empresa_id, remitente)
 
+    if cmd in ("entregado", "entrega", "entregue"):
+        return _cmd_entregado(arg, empresa_id, remitente)
+
     return _cmd_exist(texto.upper(), empresa_id)
 
 
@@ -198,6 +203,7 @@ def _ayuda():
         "• *pdf buscar TEXTO* — resultados en PDF",
         "• *excel CLAVE* — ficha del producto en Excel",
         "• *excel buscar TEXTO* — resultados en Excel",
+        "• *entregado FOLIO* — registrar la entrega de un embarque",
     ]
     if multi:
         lines += [
@@ -262,6 +268,38 @@ def _cmd_info(clave, empresa_id=None, remitente=None):
         f"Precio 3:    {p(prod.get('PREC3'))}",
     ]
     return "\n".join(lineas)
+
+
+def _cmd_entregado(arg, empresa_id=None, remitente=None):
+    """Permite al chofer (o quien reciba el pedido) reportar una entrega por WhatsApp,
+    igual que escanear el QR de la etiqueta: registra fecha/hora y el numero que avisa."""
+    folio_digits = "".join(c for c in (arg or "").strip() if c.isdigit())
+    if not folio_digits:
+        return "Indica el folio de la factura.\n_Ejemplo: entregado 2259_"
+    folio = int(folio_digits)
+
+    eid = empresa_id
+    if eid is None:
+        _, settings = load_empresas()
+        eid = settings["default"]
+
+    e = embarques_db.buscar_por_folio(eid, folio)
+    if not e:
+        return f"No encontre ninguna etiqueta de embarque con folio *{folio}*."
+    if e["estatus"] == "entregado":
+        fecha = (e["fecha_entrega"] or "")[:16].replace("T", " ")
+        return f"Esta entrega ya estaba registrada el {fecha}."
+
+    embarques_db.marcar_entregado(e["id"], "whatsapp", remitente)
+    actualizado = embarques_db.obtener_embarque(e["id"])
+    fecha      = (actualizado["fecha_entrega"] or "")[:16].replace("T", " ")
+    folio_txt  = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}"
+    return (
+        f"*Entrega registrada*\n"
+        f"Factura: {folio_txt}\n"
+        f"Cliente: {e['dest_nombre'] or ''}\n"
+        f"Fecha: {fecha}"
+    )
 
 
 def _cmd_buscar(texto, empresa_id=None):

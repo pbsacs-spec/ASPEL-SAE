@@ -103,6 +103,17 @@ def buscar_por_factura(empresa_id, factura_cve_doc):
         return [dict(r) for r in rows]
 
 
+def cve_docs_con_etiqueta(empresa_id):
+    """Claves de documento (FACTF01.CVE_DOC) que ya tienen al menos una etiqueta
+    creada en esta empresa, para poder excluirlas de 'facturas pendientes'."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT DISTINCT factura_cve_doc FROM embarques WHERE empresa_id = ?",
+            (empresa_id,),
+        ).fetchall()
+        return {r["factura_cve_doc"] for r in rows}
+
+
 def crear_embarque(empresa_id, factura, destinatario, creado_por):
     """factura: dict con cve_doc, serie, folio, cliente_clave, cliente_nombre.
     destinatario: dict con las claves en _CAMPOS_DEST (sin el prefijo dest_)."""

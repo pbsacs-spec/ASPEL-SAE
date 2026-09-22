@@ -118,7 +118,14 @@
         </div>
         <button class="btn" onclick="cargar()">Actualizar</button>
       </div>
+      <div style="font-size:.76rem;color:#888;margin-top:8px;">
+        Desde/Hasta tambien filtran la seccion de "Facturas pendientes de embarque" (por fecha de la factura). Si no eliges fechas, se muestran los ultimos 15 dias.
+      </div>
     </div>
+  </div>
+
+  <div id="contenedorPendientes">
+    <div class="empty">Cargando...</div>
   </div>
 
   <div id="contenedor">
@@ -181,6 +188,51 @@
       render();
     } catch (e) {
       document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+    }
+    cargarPendientes();
+  }
+
+  async function cargarPendientes() {
+    const empresa = empresaActual();
+    const cont = document.getElementById('contenedorPendientes');
+    cont.innerHTML = '<div class="empty">Consultando...</div>';
+    try {
+      const p = new URLSearchParams();
+      if (empresa) p.set('empresa', empresa);
+      const desde = document.getElementById('desde').value;
+      const hasta = document.getElementById('hasta').value;
+      if (desde) p.set('desde', desde);
+      if (hasta) p.set('hasta', hasta);
+
+      const res = await fetch('/api/facturas/pendientes?' + p).then(r => r.json());
+      if (!res.ok) {
+        cont.innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
+        return;
+      }
+      if (!res.data.length) {
+        cont.innerHTML = `<div class="card"><div class="empty">Sin facturas pendientes de etiqueta entre ${res.desde} y ${res.hasta}.</div></div>`;
+        return;
+      }
+      let html = `<table><thead><tr>
+        <th>Factura</th><th>Cliente</th><th>Fecha</th><th>Accion</th>
+      </tr></thead><tbody>`;
+      res.data.forEach(f => {
+        html += `<tr>
+          <td><strong>${escH(f.serie)}${escH(f.folio)}</strong></td>
+          <td>${escH(f.cliente_nombre)}</td>
+          <td>${escH(f.fecha || '')}</td>
+          <td><a class="btn btn-sm" href="/embarques/nueva?factura=${encodeURIComponent(f.cve_doc)}${empresa ? '&empresa=' + encodeURIComponent(empresa) : ''}">Crear etiqueta</a></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      cont.innerHTML = `
+        <div class="card">
+          <div class="card-hdr">Facturas pendientes de embarque (${res.data.length}) &mdash; ${res.desde} a ${res.hasta}</div>
+          <div class="table-scroll">${html}</div>
+        </div>
+      `;
+    } catch (e) {
+      cont.innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
     }
   }
 

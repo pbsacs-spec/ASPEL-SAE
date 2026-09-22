@@ -6,6 +6,7 @@ propios del embarque (destinatario editado, chofer/unidad o paqueteria/guia, y l
 datos del Emisor) se guardan localmente: ver embarques_db.py y embarque_config.ini.
 """
 import configparser
+import datetime
 import io
 import os
 import threading
@@ -143,6 +144,45 @@ def facturas_buscar():
             "cliente_clave": clave.strip(), "cliente_nombre": nombre or "",
         } for cve_doc, serie, folio, fecha_doc, clave, nombre in rows]
         return jsonify({"ok": True, "data": data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@embarques_bp.route("/api/facturas/pendientes")
+@require_embarques
+def facturas_pendientes():
+    """Facturas del rango de fechas que todavia NO tienen ninguna etiqueta creada."""
+    empresa = _empresa_actual()
+
+    hasta_txt = request.args.get("hasta", "").strip()
+    desde_txt = request.args.get("desde", "").strip()
+    hoy = datetime.date.today()
+    try:
+        hasta_d = datetime.datetime.strptime(hasta_txt, "%Y-%m-%d").date() if hasta_txt else hoy
+        desde_d = datetime.datetime.strptime(desde_txt, "%Y-%m-%d").date() if desde_txt else hoy - datetime.timedelta(days=15)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Fecha invalida."}), 400
+
+    desde_dt = datetime.datetime.combine(desde_d, datetime.time.min)
+    hasta_dt = datetime.datetime.combine(hasta_d + datetime.timedelta(days=1), datetime.time.min)
+
+    try:
+        _, rows = query("""
+            SELECT FIRST 200 f.CVE_DOC, f.SERIE, f.FOLIO, f.FECHA_DOC, c.CLAVE, c.NOMBRE
+            FROM FACTF01 f
+            JOIN CLIE01 c ON c.CLAVE = f.CVE_CLPV
+            WHERE f.STATUS = 'E'
+              AND f.FECHA_DOC >= ? AND f.FECHA_DOC < ?
+            ORDER BY f.FECHA_DOC DESC
+        """, [desde_dt, hasta_dt], empresa_id=empresa)
+
+        ya_etiquetadas = embarques_db.cve_docs_con_etiqueta(empresa)
+        data = [{
+            "cve_doc": cve_doc, "serie": (serie or "").strip(), "folio": folio,
+            "fecha": fecha_doc.strftime("%Y-%m-%d") if fecha_doc else None,
+            "cliente_clave": clave.strip(), "cliente_nombre": nombre or "",
+        } for cve_doc, serie, folio, fecha_doc, clave, nombre in rows if cve_doc not in ya_etiquetadas]
+        return jsonify({"ok": True, "data": data, "desde": desde_d.isoformat(), "hasta": hasta_d.isoformat()})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

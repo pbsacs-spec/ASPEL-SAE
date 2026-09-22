@@ -163,6 +163,8 @@
       sel.value = er.default;
       document.getElementById('empresa-card').style.display = 'block';
     }
+    const cveDoc = new URLSearchParams(location.search).get('factura');
+    if (cveDoc) elegirFacturaPorCveDoc(cveDoc);
   });
 
   function limpiarBusqueda() {
@@ -200,24 +202,30 @@
     }, 300);
   }
 
-  async function elegirFactura(idx) {
-    const f = window._resultadosBusqueda[idx];
+  function elegirFactura(idx) {
+    elegirFacturaPorCveDoc(window._resultadosBusqueda[idx].cve_doc);
+  }
+
+  function _mostrarFacturaElegida(f) {
     facturaElegida = f;
     document.getElementById('resultados').classList.remove('visible');
     document.getElementById('card-destinatario').style.display = 'block';
     document.getElementById('factura-elegida').textContent =
       `Factura ${f.serie}${f.folio} — ${f.cliente_nombre} — ${f.fecha || ''}`;
     document.getElementById('guardar-msg').innerHTML = '';
+  }
 
+  async function elegirFacturaPorCveDoc(cveDoc) {
     try {
       const p = new URLSearchParams();
       const empresa = empresaActual();
       if (empresa) p.set('empresa', empresa);
-      const res = await fetch(`/api/facturas/${encodeURIComponent(f.cve_doc)}/sugerido?` + p).then(r => r.json());
+      const res = await fetch(`/api/facturas/${encodeURIComponent(cveDoc)}/sugerido?` + p).then(r => r.json());
       if (!res.ok) {
         document.getElementById('guardar-msg').innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
         return;
       }
+      _mostrarFacturaElegida(res.data.factura);
       const d = res.data.destinatario;
       document.getElementById('d-nombre').value = d.nombre || '';
       document.getElementById('d-calle').value = d.calle || '';

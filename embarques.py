@@ -619,6 +619,13 @@ def _qr_png(data):
     return buf.getvalue()
 
 
+def _tam_imagen_px(fuente):
+    """(ancho, alto) en pixeles de una imagen, dada como bytes o como ruta de archivo."""
+    from PIL import Image as PILImage
+    with PILImage.open(io.BytesIO(fuente) if isinstance(fuente, (bytes, bytearray)) else fuente) as img:
+        return img.size
+
+
 def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
     """Pie de pagina: a la derecha el QR para que el chofer confirme la entrega desde
     su celular; a la izquierda, si ya esta embarcada, el chofer/unidad o paqueteria/guia."""
@@ -815,45 +822,76 @@ def _comprobante_pdf(e, emisor, logo):
         e["entregado_via"], e["entregado_via"] or "")
     bloque("ENTREGA", [f"Fecha de entrega: {fecha_ent}", via_txt])
 
+    # pdf.image() no respeta auto_page_break (solo cell()/multi_cell() lo hacen): una foto
+    # de celular en vertical, alta, se dibujaba mas alla del borde de la pagina y esa parte
+    # simplemente no se ve ("cortada"). Por eso aqui se mide el tamano real de cada imagen
+    # ANTES de dibujarla y se decide si hace falta saltar de pagina o encoger el ancho.
+    max_h_pagina = pdf.page_break_trigger - pdf.t_margin
+
+    def espacio_disponible():
+        return pdf.page_break_trigger - pdf.get_y()
+
+    firma_bytes, w_firma, h_firma = None, 70, 0
+    if e["firma_entrega"] and "," in e["firma_entrega"]:
+        try:
+            firma_bytes = base64.b64decode(e["firma_entrega"].split(",", 1)[1])
+            aw, ah = _tam_imagen_px(firma_bytes)
+            h_firma = w_firma * (ah / aw)
+            if h_firma > max_h_pagina:
+                w_firma *= max_h_pagina / h_firma
+                h_firma = max_h_pagina
+        except Exception:
+            firma_bytes = None
+
+    if 12 + h_firma > espacio_disponible():
+        pdf.add_page()
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_fill_color(230, 236, 245)
     pdf.cell(0, 8, "  FIRMA DE QUIEN RECIBE", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(3)
-    firma_ok = False
-    if e["firma_entrega"] and "," in e["firma_entrega"]:
-        try:
-            firma_bytes = base64.b64decode(e["firma_entrega"].split(",", 1)[1])
-            y_firma = pdf.get_y()
-            info = pdf.image(firma_bytes, x=pdf.l_margin, y=y_firma, w=70)
-            pdf.set_y(y_firma + info.rendered_height + 4)
-            firma_ok = True
-        except Exception:
-            firma_ok = False
-    if not firma_ok:
+    if firma_bytes:
+        y_firma = pdf.get_y()
+        info = pdf.image(firma_bytes, x=pdf.l_margin, y=y_firma, w=w_firma)
+        pdf.set_y(y_firma + info.rendered_height + 4)
+    else:
         pdf.set_font("Helvetica", "", 9.5)
         pdf.cell(0, 6, "Sin firma (entrega confirmada por WhatsApp).", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     fotos = embarques_db.fotos_de(e)
     if fotos:
+        ancho_disp = pdf.w - pdf.l_margin - pdf.r_margin
+        gap = 4
+        foto_w = (ancho_disp - gap * (len(fotos) - 1)) / len(fotos)
+
+        rutas = [embarques_db.ruta_foto(n) for n in fotos]
+        alto_fila = 0
+        for ruta in rutas:
+            if os.path.exists(ruta):
+                try:
+                    aw, ah = _tam_imagen_px(ruta)
+                    alto_fila = max(alto_fila, foto_w * (ah / aw))
+                except Exception:
+                    pass
+        if alto_fila > max_h_pagina:
+            foto_w *= max_h_pagina / alto_fila
+            alto_fila = max_h_pagina
+
         pdf.ln(6)
+        if 12 + alto_fila > espacio_disponible():
+            pdf.add_page()
         pdf.set_font("Helvetica", "B", 11)
         pdf.set_fill_color(230, 236, 245)
         pdf.cell(0, 8, "  EVIDENCIA FOTOGRAFICA", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(3)
-        ancho_disp = pdf.w - pdf.l_margin - pdf.r_margin
-        gap = 4
-        foto_w = (ancho_disp - gap * (len(fotos) - 1)) / len(fotos)
-        y0, x, alto_max = pdf.get_y(), pdf.l_margin, 0
-        for nombre in fotos:
-            ruta = embarques_db.ruta_foto(nombre)
+        y0, x = pdf.get_y(), pdf.l_margin
+        for ruta in rutas:
             if os.path.exists(ruta):
                 try:
-                    info = pdf.image(ruta, x=x, y=y0, w=foto_w)
-                    alto_max = max(alto_max, info.rendered_height)
+                    pdf.image(ruta, x=x, y=y0, w=foto_w)
                 except Exception:
                     pass
             x += foto_w + gap
-        pdf.set_y(y0 + alto_max + 4)
+        pdf.set_y(y0 + alto_fila + 4)
 
     return bytes(pdf.output())
 

@@ -72,6 +72,11 @@
     input[type=text], select { width: 100%; padding: 8px 10px; border: 1px solid #cdd1d9; border-radius: 6px; font-size: .87rem; }
     .campo-embarque { display: none; }
     .campo-embarque.visible { display: block; }
+
+    .ver-solo-lectura .ver-valor { font-size: .87rem; color: #222; background: #f7f9fc; border-radius: 6px; padding: 8px 10px; margin-bottom: 4px; }
+    .ver-firma { max-width: 100%; max-height: 120px; border: 1px solid #e0e4ea; border-radius: 6px; background: #fff; }
+    .ver-fotos { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ver-fotos img { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid #e0e4ea; }
     .modal-err { color: #b02020; font-size: .82rem; margin-top: 10px; display: none; }
   </style>
 </head>
@@ -273,7 +278,7 @@
 
       let acciones;
       if (f.estatus === 'entregado') {
-        acciones = '<span class="txt-muted">Etiqueta bloqueada</span>';
+        acciones = `<button class="btn btn-sm btn-secondary" onclick="verEntrega(${f.id})">Ver entrega</button>`;
         if (ES_ADMIN) {
           acciones += ` <button class="btn btn-sm btn-secondary" onclick="reactivar(${f.id}, '${escA(folio)}')">Reactivar</button>`;
         }
@@ -305,6 +310,58 @@
           res.data.map(v => `<option value="${escH(v)}">`).join('');
       }
     } catch (e) { /* autocompletado opcional */ }
+  }
+
+  function verEntrega(id) {
+    const f = filas.find(x => x.id === id);
+    if (!f) return;
+    const folio = `${f.factura_serie || ''}${f.factura_folio || ''}`;
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+
+    let envioTxt = f.tipo_embarque === 'propio'
+      ? `Reparto propio &mdash; Chofer: ${escH(f.chofer || '')} &middot; Unidad: ${escH(f.unidad || '')}`
+      : (f.tipo_embarque === 'paqueteria'
+          ? `Paqueteria: ${escH(f.paqueteria || '')} &middot; Guia: ${escH(f.guia || '')}`
+          : '&mdash;');
+
+    let fotosHtml = '';
+    try {
+      const fotos = JSON.parse(f.fotos_entrega || '[]');
+      if (fotos.length) {
+        fotosHtml = `<label>Fotos de evidencia</label><div class="ver-fotos">` +
+          fotos.map(n => `<a href="/embarques/${id}/foto/${encodeURIComponent(n)}?${p}" target="_blank">
+              <img src="/embarques/${id}/foto/${encodeURIComponent(n)}?${p}" alt="Foto de entrega"></a>`).join('') +
+          `</div>`;
+      }
+    } catch (e) { /* sin fotos */ }
+
+    document.getElementById('modalTitulo').textContent = `Detalle de entrega — ${folio}`;
+    document.getElementById('modalBody').innerHTML = `
+      <div class="ver-solo-lectura">
+        <label>Destinatario</label>
+        <div class="ver-valor">${escH(f.dest_nombre)}</div>
+
+        <label>Fecha y hora de entrega</label>
+        <div class="ver-valor">${escH((f.fecha_entrega || '').slice(0, 16).replace('T', ' '))} &middot; confirmada por ${escH(f.entregado_via === 'qr' ? 'QR' : 'WhatsApp')}</div>
+
+        <label>Datos de envio</label>
+        <div class="ver-valor">${envioTxt}</div>
+
+        <label>Firma de quien recibe</label>
+        <div class="ver-valor">
+          ${f.firma_entrega ? `<img class="ver-firma" src="${f.firma_entrega}" alt="Firma">` : '<span class="txt-muted">Sin firma (confirmado por WhatsApp)</span>'}
+        </div>
+
+        ${fotosHtml}
+      </div>
+      <div style="margin-top:18px; display:flex; gap:8px;">
+        <a class="btn btn-sm" href="/embarques/${id}/comprobante.pdf?${p}" target="_blank">Descargar comprobante</a>
+        <button class="btn btn-sm btn-secondary" onclick="cerrarModal()">Cerrar</button>
+      </div>
+    `;
+    document.getElementById('overlay').classList.add('show');
   }
 
   function abrirEmbarcar(id) {

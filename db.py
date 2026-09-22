@@ -84,9 +84,9 @@ fdb.load_api(load_config()["fb_lib"])
 
 def get_connection(empresa_id=None):
     empresas, settings = load_empresas()
-    if empresa_id is None:
+    if empresa_id not in empresas:
         empresa_id = settings["default"]
-    emp = empresas.get(empresa_id) or next(iter(empresas.values()))
+    emp = empresas[empresa_id]
     return fdb.connect(
         database=emp["db_path"],
         user="SYSDBA",

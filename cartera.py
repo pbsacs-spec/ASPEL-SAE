@@ -20,6 +20,15 @@ cartera_bp = Blueprint("cartera", __name__)
 require_cartera = require_roles("administradores", "admin", realm="Aspel Inventario")
 
 
+def _as_date(v):
+    """Normaliza a datetime.date: fdb devuelve datetime.datetime para columnas
+    TIMESTAMP pero datetime.date para columnas DATE, y solo el primero tiene
+    .date()."""
+    if v is None:
+        return None
+    return v.date() if isinstance(v, datetime.datetime) else v
+
+
 def _cargos_y_pagos(empresa_id):
     _, cargos = query("""
         SELECT CVE_CLIE, NO_FACTURA, IMPORTE, FECHA_APLI, FECHA_VENC
@@ -72,14 +81,14 @@ def _analizar_clientes(empresa_id, hoy=None):
 
         if saldo <= 1:
             if ult_pago and fecha_venc:
-                dias = (ult_pago.date() - fecha_venc.date()).days
+                dias = (_as_date(ult_pago) - _as_date(fecha_venc)).days
                 if dias <= 0:
                     c["a_tiempo"] += 1
                 else:
                     c["tarde"] += 1
                     c["suma_dias_atraso"] += dias
-        elif fecha_venc and fecha_venc.date() < hoy:
-            dias_venc = (hoy - fecha_venc.date()).days
+        elif fecha_venc and _as_date(fecha_venc) < hoy:
+            dias_venc = (hoy - _as_date(fecha_venc)).days
             c["vencido_monto"] += saldo
             c["vencido_num"] += 1
             c["vencido_dias_max"] = max(c["vencido_dias_max"], dias_venc)
@@ -174,9 +183,9 @@ def detalle(clave):
             if saldo <= 1:
                 estado = "pagada"
                 if ult_pago and fecha_venc:
-                    dias = (ult_pago.date() - fecha_venc.date()).days
+                    dias = (_as_date(ult_pago) - _as_date(fecha_venc)).days
                     estado = "pagada_tarde" if dias > 0 else "pagada_a_tiempo"
-            elif fecha_venc and fecha_venc.date() < hoy:
+            elif fecha_venc and _as_date(fecha_venc) < hoy:
                 estado = "vencida"
             else:
                 estado = "vigente"

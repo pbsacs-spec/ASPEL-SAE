@@ -89,6 +89,9 @@
     <a href="/ventas">Ventas</a>
     <a href="/cartera">Cartera</a>
     <a href="/embarques/configuracion">Configurar emisor</a>
+    <a href="/embarques/choferes">Choferes</a>
+    <a href="/embarques/unidades">Unidades</a>
+    <a href="/embarques/reportes">Reportes</a>
     {% if es_admin %}
     <a href="/admin/database">Base de datos</a>
     <a href="/admin/whatsapp">WhatsApp</a>
@@ -312,6 +315,62 @@
     } catch (e) { /* autocompletado opcional */ }
   }
 
+  let CHOFERES = [];
+  let UNIDADES = [];
+
+  function llenarSelect(sel, items, campoId, campoTexto) {
+    sel.innerHTML = '<option value="">Selecciona...</option>' +
+      items.map(it => `<option value="${it[campoId]}">${escH(it[campoTexto])}</option>`).join('') +
+      '<option value="__nuevo__">+ Nuevo...</option>';
+  }
+
+  async function llenarSelectsChoferUnidad(prefijo, choferIdActual, unidadIdActual, choferTextoLegacy, unidadTextoLegacy) {
+    try {
+      const [cr, ur] = await Promise.all([
+        fetch('/api/choferes').then(r => r.json()),
+        fetch('/api/unidades').then(r => r.json()),
+      ]);
+      if (cr.ok) CHOFERES = cr.data;
+      if (ur.ok) UNIDADES = ur.data;
+    } catch (e) { /* selects quedan vacios, se puede seguir con "+ Nuevo..." */ }
+
+    const selC = document.getElementById(`${prefijo}-chofer-sel`);
+    const selU = document.getElementById(`${prefijo}-unidad-sel`);
+    llenarSelect(selC, CHOFERES, 'id', 'nombre');
+    llenarSelect(selU, UNIDADES, 'id', 'descripcion');
+
+    if (choferIdActual) {
+      selC.value = String(choferIdActual);
+    } else if (choferTextoLegacy) {
+      selC.value = '__nuevo__';
+      document.getElementById(`${prefijo}-chofer-nuevo`).value = choferTextoLegacy;
+      document.getElementById(`${prefijo}-chofer-nuevo`).style.display = 'block';
+    }
+    if (unidadIdActual) {
+      selU.value = String(unidadIdActual);
+    } else if (unidadTextoLegacy) {
+      selU.value = '__nuevo__';
+      document.getElementById(`${prefijo}-unidad-nuevo`).value = unidadTextoLegacy;
+      document.getElementById(`${prefijo}-unidad-nuevo`).style.display = 'block';
+    }
+  }
+
+  function onCambioChofer(prefijo) {
+    const sel = document.getElementById(`${prefijo}-chofer-sel`);
+    document.getElementById(`${prefijo}-chofer-nuevo`).style.display = sel.value === '__nuevo__' ? 'block' : 'none';
+    if (sel.value && sel.value !== '__nuevo__') {
+      const chofer = CHOFERES.find(c => String(c.id) === sel.value);
+      if (chofer && chofer.unidad_default_id) {
+        document.getElementById(`${prefijo}-unidad-sel`).value = String(chofer.unidad_default_id);
+        onCambioUnidad(prefijo);
+      }
+    }
+  }
+  function onCambioUnidad(prefijo) {
+    const sel = document.getElementById(`${prefijo}-unidad-sel`);
+    document.getElementById(`${prefijo}-unidad-nuevo`).style.display = sel.value === '__nuevo__' ? 'block' : 'none';
+  }
+
   function verEntrega(id) {
     const f = filas.find(x => x.id === id);
     if (!f) return;
@@ -388,11 +447,11 @@
 
       <div id="campos-propio" class="campo-embarque ${tipoActual === 'propio' ? 'visible' : ''}">
         <label>Chofer</label>
-        <input type="text" id="m-chofer" list="lista-chofer" value="${escH(f.chofer || '')}">
-        <datalist id="lista-chofer"></datalist>
+        <select id="m-chofer-sel" onchange="onCambioChofer('m')"></select>
+        <input type="text" id="m-chofer-nuevo" placeholder="Nombre del chofer nuevo" style="display:none; margin-top:6px;">
         <label>Unidad</label>
-        <input type="text" id="m-unidad" list="lista-unidad" value="${escH(f.unidad || '')}">
-        <datalist id="lista-unidad"></datalist>
+        <select id="m-unidad-sel" onchange="onCambioUnidad('m')"></select>
+        <input type="text" id="m-unidad-nuevo" placeholder="Descripcion de la unidad nueva" style="display:none; margin-top:6px;">
       </div>
 
       <div id="campos-paqueteria" class="campo-embarque ${tipoActual === 'paqueteria' ? 'visible' : ''}">
@@ -417,9 +476,8 @@
       </div>
     `;
     document.getElementById('overlay').classList.add('show');
-    cargarCatalogo('chofer', 'lista-chofer');
-    cargarCatalogo('unidad', 'lista-unidad');
     cargarCatalogo('paqueteria', 'lista-paqueteria');
+    llenarSelectsChoferUnidad('m', f.chofer_id, f.unidad_id, f.chofer, f.unidad);
   }
 
   function toggleTipoEmbarque() {
@@ -432,8 +490,12 @@
     const tipo = document.getElementById('m-tipo').value;
     const body = { tipo_embarque: tipo };
     if (tipo === 'propio') {
-      body.chofer = document.getElementById('m-chofer').value.trim();
-      body.unidad = document.getElementById('m-unidad').value.trim();
+      const choferSel = document.getElementById('m-chofer-sel').value;
+      if (choferSel === '__nuevo__') body.chofer_nuevo = document.getElementById('m-chofer-nuevo').value.trim();
+      else if (choferSel) body.chofer_id = choferSel;
+      const unidadSel = document.getElementById('m-unidad-sel').value;
+      if (unidadSel === '__nuevo__') body.unidad_nuevo = document.getElementById('m-unidad-nuevo').value.trim();
+      else if (unidadSel) body.unidad_id = unidadSel;
     } else {
       body.paqueteria = document.getElementById('m-paqueteria').value.trim();
       body.guia = document.getElementById('m-guia').value.trim();

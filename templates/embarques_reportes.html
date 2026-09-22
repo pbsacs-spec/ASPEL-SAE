@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reportes de rutas - Aspel SAE</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 1150px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr { background: #f7f9fc; border-bottom: 1px solid #e0e4ea; padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c; }
+    .card-body { padding: 18px; }
+
+    .filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    .fg { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+    .fg label { font-size: .78rem; font-weight: 600; color: #555; }
+    .fg select, .fg input { padding: 7px 10px; border: 1px solid #cdd1d9; border-radius: 6px; font-size: .87rem; }
+    #empresa-wrap { display: none; }
+    .atajos { display: flex; gap: 6px; }
+
+    .btn { padding: 7px 16px; border: none; border-radius: 6px; font-size: .83rem; font-weight: 600; cursor: pointer; background: #1a3a5c; color: #fff; }
+    .btn:hover { opacity: .85; }
+    .btn-sm { padding: 5px 12px; font-size: .78rem; }
+    .btn-secondary { background: #e8ecf0; color: #333; }
+
+    .totales-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .stat { background: #f7f9fc; border-radius: 8px; padding: 12px 14px; }
+    .stat .chofer { font-weight: 700; color: #1a3a5c; font-size: .9rem; margin-bottom: 6px; }
+    .stat .dato { font-size: .78rem; color: #555; }
+    .stat .dato b { color: #222; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; white-space: nowrap; }
+    th.num, td.num { text-align: right; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; }
+    .table-scroll { overflow-x: auto; }
+
+    .empty { text-align: center; color: #999; padding: 30px; font-size: .88rem; }
+    .error-msg { text-align: center; color: #b02020; padding: 30px; font-size: .88rem; }
+
+    #mapaContenedor { height: 420px; border-radius: 8px; }
+    .mapa-hint { font-size: .78rem; color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Reportes de rutas &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/embarques">Embarques</a>
+    <a href="/embarques/choferes">Choferes</a>
+    <a href="/embarques/unidades">Unidades</a>
+    <a href="/">Inventario</a>
+  </div>
+</header>
+
+<div class="page">
+
+  <div class="card">
+    <div class="card-body">
+      <div class="filtros">
+        <div class="fg" id="empresa-wrap">
+          <label>Empresa</label>
+          <select id="empresa" onchange="cargar()"></select>
+        </div>
+        <div class="fg">
+          <label>Chofer</label>
+          <select id="chofer" onchange="cargar()">
+            <option value="">Todos</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Desde</label>
+          <input type="date" id="desde" onchange="cargar()">
+        </div>
+        <div class="fg">
+          <label>Hasta</label>
+          <input type="date" id="hasta" onchange="cargar()">
+        </div>
+        <div class="atajos">
+          <button class="btn btn-sm btn-secondary" onclick="atajo('hoy')">Hoy</button>
+          <button class="btn btn-sm btn-secondary" onclick="atajo('semana')">Esta semana</button>
+          <button class="btn btn-sm btn-secondary" onclick="atajo('mes')">Este mes</button>
+        </div>
+        <button class="btn" onclick="cargar()">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="contenedor">
+    <div class="empty">Cargando...</div>
+  </div>
+
+</div>
+
+<script src="/static/vendor/leaflet.js"></script>
+<script>
+  const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  let mapaLeaflet = null;
+  let capaPuntos = null;
+
+  function empresaActual() {
+    const sel = document.getElementById('empresa');
+    return sel ? sel.value : '';
+  }
+
+  function hoyISO(offsetDias = 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDias);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function atajo(cual) {
+    const hoy = new Date();
+    if (cual === 'hoy') {
+      document.getElementById('desde').value = hoyISO();
+      document.getElementById('hasta').value = hoyISO();
+    } else if (cual === 'semana') {
+      const diaSemana = (hoy.getDay() + 6) % 7; // lunes=0
+      document.getElementById('desde').value = hoyISO(-diaSemana);
+      document.getElementById('hasta').value = hoyISO();
+    } else if (cual === 'mes') {
+      document.getElementById('desde').value = hoyISO().slice(0, 8) + '01';
+      document.getElementById('hasta').value = hoyISO();
+    }
+    cargar();
+  }
+
+  // Rango por defecto: ultimos 7 dias
+  document.getElementById('desde').value = hoyISO(-6);
+  document.getElementById('hasta').value = hoyISO();
+
+  Promise.all([
+    fetch('/api/empresas').then(r => r.json()).catch(() => null),
+    fetch('/api/choferes').then(r => r.json()).catch(() => null),
+  ]).then(([er, cr]) => {
+    if (er && er.ok && er.data.length > 1) {
+      const sel = document.getElementById('empresa');
+      sel.innerHTML = er.data.map(e => `<option value="${e.id}">${escH(e.nombre)}</option>`).join('');
+      sel.value = er.default;
+      document.getElementById('empresa-wrap').style.display = 'flex';
+    }
+    if (cr && cr.ok) {
+      const sel = document.getElementById('chofer');
+      sel.innerHTML = '<option value="">Todos</option>' +
+        cr.data.map(c => `<option value="${c.id}">${escH(c.nombre)}</option>`).join('');
+    }
+    cargar();
+  });
+
+  async function cargar() {
+    const cont = document.getElementById('contenedor');
+    cont.innerHTML = '<div class="empty">Consultando...</div>';
+    try {
+      const p = new URLSearchParams();
+      const empresa = empresaActual();
+      if (empresa) p.set('empresa', empresa);
+      const chofer = document.getElementById('chofer').value;
+      if (chofer) p.set('chofer_id', chofer);
+      p.set('desde', document.getElementById('desde').value);
+      p.set('hasta', document.getElementById('hasta').value);
+
+      const res = await fetch('/api/reportes/entregas?' + p).then(r => r.json());
+      if (!res.ok) {
+        cont.innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
+        return;
+      }
+      render(res);
+    } catch (e) {
+      cont.innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+    }
+  }
+
+  function fmtHoras(h) {
+    if (h == null) return '—';
+    if (h < 1) return Math.round(h * 60) + ' min';
+    return h.toFixed(1) + ' h';
+  }
+
+  function render(res) {
+    const cont = document.getElementById('contenedor');
+    cont.innerHTML = `
+      <div class="card">
+        <div class="card-hdr">Totales por chofer (${res.desde} a ${res.hasta})</div>
+        <div class="card-body" id="totalesBody"></div>
+      </div>
+      <div class="card">
+        <div class="card-hdr">Entregas del periodo (${res.entregas.length})</div>
+        <div class="table-scroll" id="manifiestoBody"></div>
+      </div>
+      <div class="card">
+        <div class="card-hdr">Mapa de entregas</div>
+        <div class="card-body">
+          <div id="mapaContenedor"></div>
+          <div class="mapa-hint">Solo se muestran las entregas confirmadas por QR con ubicacion GPS disponible. El mapa de fondo requiere conexion a internet en este navegador.</div>
+        </div>
+      </div>
+    `;
+
+    renderTotales(res.totales_por_chofer);
+    renderManifiesto(res.entregas);
+    renderMapa(res.puntos_mapa);
+  }
+
+  function renderTotales(totales) {
+    const el = document.getElementById('totalesBody');
+    if (!totales.length) {
+      el.innerHTML = '<div class="empty">Sin entregas de reparto propio en este periodo.</div>';
+      return;
+    }
+    el.innerHTML = `<div class="totales-grid">` + totales.map(t => `
+      <div class="stat">
+        <div class="chofer">${escH(t.chofer)}</div>
+        <div class="dato">Entregas: <b>${t.num_entregas}</b></div>
+        <div class="dato">Bultos: <b>${t.total_bultos ?? 0}</b></div>
+        <div class="dato">Tiempo promedio: <b>${fmtHoras(t.horas_promedio)}</b></div>
+      </div>
+    `).join('') + `</div>`;
+  }
+
+  function renderManifiesto(entregas) {
+    const el = document.getElementById('manifiestoBody');
+    if (!entregas.length) {
+      el.innerHTML = '<div class="empty">Sin entregas confirmadas en este periodo.</div>';
+      return;
+    }
+    let html = `<table><thead><tr>
+      <th>Factura</th><th>Destinatario</th><th>Envio</th><th>Embarcado</th><th>Entregado</th><th class="num">Tiempo</th><th class="num">Bultos</th>
+    </tr></thead><tbody>`;
+    entregas.forEach(e => {
+      const folio = `${e.factura_serie || ''}${e.factura_folio || ''}`;
+      const envio = e.tipo_embarque === 'propio'
+        ? `${escH(e.chofer || '')}${e.unidad ? ' / ' + escH(e.unidad) : ''}`
+        : escH(e.paqueteria || '');
+      html += `<tr>
+        <td><strong>${escH(folio)}</strong></td>
+        <td>${escH(e.dest_nombre)}</td>
+        <td>${envio}</td>
+        <td>${(e.fecha_embarque || '').slice(0, 16).replace('T', ' ') || '—'}</td>
+        <td>${(e.fecha_entrega || '').slice(0, 16).replace('T', ' ')}</td>
+        <td class="num">${fmtHoras(e.horas_transcurridas)}</td>
+        <td class="num">${e.num_bultos}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }
+
+  function renderMapa(puntos) {
+    if (!mapaLeaflet) {
+      mapaLeaflet = L.map('mapaContenedor', { zoomControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+      }).addTo(mapaLeaflet);
+    } else {
+      mapaLeaflet.invalidateSize();
+    }
+    if (capaPuntos) { mapaLeaflet.removeLayer(capaPuntos); capaPuntos = null; }
+
+    if (!puntos.length) {
+      mapaLeaflet.setView([23.6345, -102.5528], 5); // centro de Mexico
+      return;
+    }
+    capaPuntos = L.layerGroup(puntos.map(p => {
+      const marcador = L.circleMarker([p.lat, p.lon], {
+        radius: 7, color: '#1a3a5c', weight: 2, fillColor: '#2f6fb0', fillOpacity: .8,
+      });
+      marcador.bindPopup(
+        `<strong>${escH(p.folio)}</strong><br>${escH(p.cliente || '')}<br>${escH(p.chofer || '')}<br>${escH((p.fecha || '').slice(0, 16).replace('T', ' '))}`
+      );
+      return marcador;
+    })).addTo(mapaLeaflet);
+
+    try {
+      mapaLeaflet.fitBounds(capaPuntos.getBounds(), { padding: [20, 20], maxZoom: 14 });
+    } catch (e) {
+      mapaLeaflet.setView([23.6345, -102.5528], 5);
+    }
+  }
+</script>
+
+</body>
+</html>

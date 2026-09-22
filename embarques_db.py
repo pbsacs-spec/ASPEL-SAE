@@ -120,6 +120,66 @@ def init_db():
             )
         """)
 
+        # Catalogo formal de choferes y unidades (antes solo texto libre en `catalogo`).
+        chofer_tabla_nueva = not con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='choferes'"
+        ).fetchone()
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS choferes (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre             TEXT NOT NULL,
+                estatus            TEXT NOT NULL DEFAULT 'activo',
+                telefono           TEXT,
+                licencia_numero    TEXT,
+                licencia_vigencia  TEXT,
+                unidad_default_id  INTEGER
+            )
+        """)
+        unidad_tabla_nueva = not con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='unidades'"
+        ).fetchone()
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS unidades (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                descripcion            TEXT NOT NULL,
+                placas                 TEXT,
+                estatus                TEXT NOT NULL DEFAULT 'activo',
+                tipo                   TEXT,
+                capacidad              TEXT,
+                verificacion_vigencia  TEXT,
+                seguro_vigencia        TEXT
+            )
+        """)
+
+        cols_emb = [r["name"] for r in con.execute("PRAGMA table_info(embarques)").fetchall()]
+        for columna in ("chofer_id", "unidad_id"):
+            if columna not in cols_emb:
+                con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} INTEGER")
+
+        if chofer_tabla_nueva or unidad_tabla_nueva:
+            # Siembra los catalogos con lo que ya se habia aprendido como texto libre,
+            # y liga los embarques existentes por coincidencia de nombre (TRIM) para
+            # que los reportes tambien sirvan sobre datos historicos.
+            for nombre, in con.execute(
+                "SELECT DISTINCT valor FROM catalogo WHERE tipo = 'chofer'"
+            ).fetchall():
+                con.execute("INSERT INTO choferes (nombre) VALUES (?)", (nombre,))
+            for descripcion, in con.execute(
+                "SELECT DISTINCT valor FROM catalogo WHERE tipo = 'unidad'"
+            ).fetchall():
+                con.execute("INSERT INTO unidades (descripcion) VALUES (?)", (descripcion,))
+
+            con.execute("""
+                UPDATE embarques SET chofer_id = (
+                    SELECT c.id FROM choferes c WHERE TRIM(c.nombre) = TRIM(embarques.chofer)
+                ) WHERE chofer_id IS NULL AND chofer IS NOT NULL
+            """)
+            con.execute("""
+                UPDATE embarques SET unidad_id = (
+                    SELECT u.id FROM unidades u WHERE TRIM(u.descripcion) = TRIM(embarques.unidad)
+                ) WHERE unidad_id IS NULL AND unidad IS NOT NULL
+            """)
+
 
 init_db()
 
@@ -168,11 +228,121 @@ def catalogo_listar(tipo):
 
 
 def _aprender_catalogo(tipo_embarque, datos):
-    if tipo_embarque == "propio":
-        catalogo_agregar("chofer", datos.get("chofer"))
-        catalogo_agregar("unidad", datos.get("unidad"))
-    elif tipo_embarque == "paqueteria":
+    # Chofer/unidad ahora se administran en su propio catalogo (choferes_listar()/
+    # unidades_listar(), tablas `choferes`/`unidades`); solo paqueteria sigue con
+    # autocompletado de texto libre.
+    if tipo_embarque == "paqueteria":
         catalogo_agregar("paqueteria", datos.get("paqueteria"))
+
+
+# ── Catalogo de choferes y unidades ─────────────────────────────────────────
+# No se borran registros (igual que Aspel usa STATUS en vez de eliminar filas):
+# solo se activan/desactivan, porque etiquetas historicas los siguen referenciando.
+
+def choferes_listar(solo_activos=False):
+    with _conn() as con:
+        sql = "SELECT * FROM choferes"
+        if solo_activos:
+            sql += " WHERE estatus = 'activo'"
+        sql += " ORDER BY nombre"
+        return [dict(r) for r in con.execute(sql).fetchall()]
+
+
+def chofer_obtener(chofer_id):
+    with _conn() as con:
+        row = con.execute("SELECT * FROM choferes WHERE id = ?", (chofer_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def chofer_guardar(chofer_id, datos):
+    """chofer_id None/0 -> crea uno nuevo; si no, actualiza. Regresa el id."""
+    campos = ("nombre", "telefono", "licencia_numero", "licencia_vigencia", "unidad_default_id")
+    valores = {c: (datos.get(c) or None) for c in campos}
+    valores["unidad_default_id"] = int(valores["unidad_default_id"]) if valores["unidad_default_id"] else None
+    with _LOCK, _conn() as con:
+        if chofer_id:
+            con.execute("""
+                UPDATE choferes SET nombre=?, telefono=?, licencia_numero=?,
+                    licencia_vigencia=?, unidad_default_id=? WHERE id=?
+            """, (*valores.values(), chofer_id))
+            return chofer_id
+        cur = con.execute("""
+            INSERT INTO choferes (nombre, telefono, licencia_numero, licencia_vigencia, unidad_default_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, tuple(valores.values()))
+        return cur.lastrowid
+
+
+def chofer_cambiar_estatus(chofer_id, estatus):
+    with _LOCK, _conn() as con:
+        con.execute("UPDATE choferes SET estatus=? WHERE id=?", (estatus, chofer_id))
+
+
+def chofer_obtener_o_crear(nombre):
+    """Para la opcion "+ Nuevo chofer..." en el formulario de embarque: si ya existe
+    uno activo con ese nombre lo reutiliza, si no lo crea. Regresa (id, nombre)."""
+    nombre = (nombre or "").strip()
+    if not nombre:
+        return None, None
+    with _LOCK, _conn() as con:
+        row = con.execute(
+            "SELECT id FROM choferes WHERE TRIM(nombre) = ?", (nombre,)
+        ).fetchone()
+        if row:
+            return row["id"], nombre
+        cur = con.execute("INSERT INTO choferes (nombre) VALUES (?)", (nombre,))
+        return cur.lastrowid, nombre
+
+
+def unidades_listar(solo_activos=False):
+    with _conn() as con:
+        sql = "SELECT * FROM unidades"
+        if solo_activos:
+            sql += " WHERE estatus = 'activo'"
+        sql += " ORDER BY descripcion"
+        return [dict(r) for r in con.execute(sql).fetchall()]
+
+
+def unidad_obtener(unidad_id):
+    with _conn() as con:
+        row = con.execute("SELECT * FROM unidades WHERE id = ?", (unidad_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def unidad_guardar(unidad_id, datos):
+    campos = ("descripcion", "placas", "tipo", "capacidad", "verificacion_vigencia", "seguro_vigencia")
+    valores = {c: (datos.get(c) or None) for c in campos}
+    with _LOCK, _conn() as con:
+        if unidad_id:
+            con.execute("""
+                UPDATE unidades SET descripcion=?, placas=?, tipo=?, capacidad=?,
+                    verificacion_vigencia=?, seguro_vigencia=? WHERE id=?
+            """, (*valores.values(), unidad_id))
+            return unidad_id
+        cur = con.execute("""
+            INSERT INTO unidades (descripcion, placas, tipo, capacidad, verificacion_vigencia, seguro_vigencia)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, tuple(valores.values()))
+        return cur.lastrowid
+
+
+def unidad_cambiar_estatus(unidad_id, estatus):
+    with _LOCK, _conn() as con:
+        con.execute("UPDATE unidades SET estatus=? WHERE id=?", (estatus, unidad_id))
+
+
+def unidad_obtener_o_crear(descripcion):
+    descripcion = (descripcion or "").strip()
+    if not descripcion:
+        return None, None
+    with _LOCK, _conn() as con:
+        row = con.execute(
+            "SELECT id FROM unidades WHERE TRIM(descripcion) = ?", (descripcion,)
+        ).fetchone()
+        if row:
+            return row["id"], descripcion
+        cur = con.execute("INSERT INTO unidades (descripcion) VALUES (?)", (descripcion,))
+        return cur.lastrowid, descripcion
 
 
 def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=None):
@@ -183,15 +353,18 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
     'pendiente' (se puede marcar despues)."""
     info = embarque_info or {}
     tipo = info.get("tipo_embarque")
+    chofer_id, unidad_id = info.get("chofer_id"), info.get("unidad_id")
     if tipo == "propio":
         estatus, chofer, unidad, paqueteria, guia = "embarcado", info.get("chofer", ""), info.get("unidad", ""), None, None
         fecha_embarque, embarcado_por = _ahora(), creado_por
     elif tipo == "paqueteria":
         estatus, chofer, unidad, paqueteria, guia = "embarcado", None, None, info.get("paqueteria", ""), info.get("guia", "")
         fecha_embarque, embarcado_por = _ahora(), creado_por
+        chofer_id = unidad_id = None
     else:
         estatus, chofer, unidad, paqueteria, guia = "pendiente", None, None, None, None
         fecha_embarque, embarcado_por = None, None
+        chofer_id = unidad_id = None
     num_bultos = max(1, min(200, int(info.get("num_bultos") or 1)))
     token_entrega = secrets.token_urlsafe(24)
 
@@ -201,15 +374,16 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
                 empresa_id, factura_cve_doc, factura_serie, factura_folio,
                 cliente_clave, cliente_nombre,
                 {", ".join(_CAMPOS_DEST)},
-                estatus, tipo_embarque, chofer, unidad, paqueteria, guia, num_bultos,
+                estatus, tipo_embarque, chofer, unidad, chofer_id, unidad_id,
+                paqueteria, guia, num_bultos,
                 fecha_creacion, creado_por, fecha_embarque, embarcado_por, token_entrega
             ) VALUES (?, ?, ?, ?, ?, ?, {", ".join("?" for _ in _CAMPOS_DEST)},
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             empresa_id, factura["cve_doc"], factura.get("serie"), factura.get("folio"),
             factura.get("cliente_clave"), factura.get("cliente_nombre"),
             *[destinatario.get(c[len("dest_"):], "") for c in _CAMPOS_DEST],
-            estatus, tipo, chofer, unidad, paqueteria, guia, num_bultos,
+            estatus, tipo, chofer, unidad, chofer_id, unidad_id, paqueteria, guia, num_bultos,
             _ahora(), creado_por, fecha_embarque, embarcado_por, token_entrega,
         ))
         embarque_id = cur.lastrowid
@@ -262,15 +436,16 @@ def marcar_embarcado(embarque_id, tipo_embarque, datos, usuario):
         if tipo_embarque == "propio":
             con.execute("""
                 UPDATE embarques SET estatus='embarcado', tipo_embarque='propio',
-                    chofer=?, unidad=?, paqueteria=NULL, guia=NULL, num_bultos=?,
+                    chofer=?, unidad=?, chofer_id=?, unidad_id=?, paqueteria=NULL, guia=NULL, num_bultos=?,
                     fecha_embarque=COALESCE(fecha_embarque, ?),
                     embarcado_por=COALESCE(embarcado_por, ?)
                 WHERE id = ? AND estatus != 'entregado'
-            """, (datos.get("chofer", ""), datos.get("unidad", ""), num_bultos, _ahora(), usuario, embarque_id))
+            """, (datos.get("chofer", ""), datos.get("unidad", ""), datos.get("chofer_id"), datos.get("unidad_id"),
+                  num_bultos, _ahora(), usuario, embarque_id))
         else:
             con.execute("""
                 UPDATE embarques SET estatus='embarcado', tipo_embarque='paqueteria',
-                    chofer=NULL, unidad=NULL, paqueteria=?, guia=?, num_bultos=?,
+                    chofer=NULL, unidad=NULL, chofer_id=NULL, unidad_id=NULL, paqueteria=?, guia=?, num_bultos=?,
                     fecha_embarque=COALESCE(fecha_embarque, ?),
                     embarcado_por=COALESCE(embarcado_por, ?)
                 WHERE id = ? AND estatus != 'entregado'
@@ -396,3 +571,50 @@ def buscar_por_folio(empresa_id, folio):
             ORDER BY id DESC LIMIT 1
         """, (empresa_id, folio)).fetchone()
         return dict(row) if row else None
+
+
+# ── Reportes de rutas por chofer ─────────────────────────────────────────────
+
+def reporte_entregas(empresa_id, desde, hasta, chofer_id=None):
+    """Manifiesto de entregas confirmadas en el periodo (sobre fecha_entrega).
+    chofer_id opcional filtra a un solo chofer."""
+    where = [
+        "empresa_id = ?", "estatus = 'entregado'", "fecha_entrega IS NOT NULL",
+        "date(fecha_entrega) >= date(?)", "date(fecha_entrega) <= date(?)",
+    ]
+    params = [empresa_id, desde, hasta]
+    if chofer_id:
+        where.append("chofer_id = ?")
+        params.append(chofer_id)
+    with _conn() as con:
+        rows = con.execute(f"""
+            SELECT id, factura_serie, factura_folio, dest_nombre, chofer, unidad,
+                   paqueteria, guia, tipo_embarque, fecha_embarque, fecha_entrega,
+                   num_bultos, lat_entrega, lon_entrega,
+                   (julianday(fecha_entrega) - julianday(fecha_embarque)) * 24.0 AS horas_transcurridas
+            FROM embarques
+            WHERE {" AND ".join(where)}
+            ORDER BY fecha_entrega DESC
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def reporte_totales_por_chofer(empresa_id, desde, hasta):
+    """Entregas de reparto propio del periodo, agrupadas por chofer (usa chofer_id
+    cuando existe; si no, cae al texto crudo para etiquetas viejas sin backfill)."""
+    with _conn() as con:
+        rows = con.execute("""
+            SELECT COALESCE(c.nombre, e.chofer, '(sin chofer registrado)') AS chofer,
+                   e.chofer_id AS chofer_id,
+                   COUNT(*) AS num_entregas,
+                   SUM(e.num_bultos) AS total_bultos,
+                   AVG((julianday(e.fecha_entrega) - julianday(e.fecha_embarque)) * 24.0) AS horas_promedio
+            FROM embarques e
+            LEFT JOIN choferes c ON c.id = e.chofer_id
+            WHERE e.empresa_id = ? AND e.estatus = 'entregado' AND e.fecha_entrega IS NOT NULL
+              AND e.tipo_embarque = 'propio'
+              AND date(e.fecha_entrega) >= date(?) AND date(e.fecha_entrega) <= date(?)
+            GROUP BY COALESCE(c.id, e.chofer)
+            ORDER BY num_entregas DESC
+        """, (empresa_id, desde, hasta)).fetchall()
+        return [dict(r) for r in rows]

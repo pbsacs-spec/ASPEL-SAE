@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unidades - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 900px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr { background: #f7f9fc; border-bottom: 1px solid #e0e4ea; padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c; }
+    .card-body { padding: 20px; }
+
+    .flash { padding: 10px 16px; border-radius: 8px; font-size: .87rem; margin-bottom: 4px; }
+    .flash.ok  { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    .flash.err { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fbff; }
+    .empty-row td { text-align: center; color: #aaa; padding: 24px; font-size: .85rem; }
+    .inactivo td { color: #999; }
+
+    .estatus-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: .74rem; font-weight: 600; }
+    .estatus-activo   { background: #eafaf1; color: #1e8449; }
+    .estatus-inactivo { background: #f0f0f0; color: #888; }
+    .vig-vencida { color: #b02020; font-weight: 600; }
+
+    label { display: block; font-size: .85rem; font-weight: 600; color: #333; margin-bottom: 5px; }
+    .hint { font-size: .78rem; color: #888; font-weight: 400; margin-top: 4px; }
+    input[type=text], input[type=date] {
+      width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px;
+      font-size: .88rem; color: #222;
+    }
+    input:focus { outline: none; border-color: #1a3a5c; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
+    .field { margin-bottom: 4px; }
+
+    .btn { padding: 8px 16px; border: none; border-radius: 7px; font-size: .83rem; font-weight: 600; cursor: pointer; }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: #1a3a5c; color: #fff; }
+    .btn-secondary { background: #e8ecf0; color: #333; }
+    .btn-sm { padding: 5px 11px; font-size: .78rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Unidades &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/embarques">Embarques</a>
+    <a href="/embarques/choferes">Choferes</a>
+    <a href="/embarques/reportes">Reportes</a>
+    <a href="/">Inventario</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in msgs %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="card">
+    <div class="card-hdr">Unidades registradas</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Descripcion</th><th>Placas</th><th>Tipo</th><th>Capacidad</th>
+          <th>Verificacion</th><th>Seguro</th><th>Estatus</th><th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not unidades %}
+          <tr class="empty-row"><td colspan="8">No hay unidades registradas.</td></tr>
+        {% endif %}
+        {% for u in unidades %}
+        <tr class="{{ 'inactivo' if u.estatus == 'inactivo' else '' }}">
+          <td><strong>{{ u.descripcion }}</strong></td>
+          <td>{{ u.placas or '—' }}</td>
+          <td>{{ u.tipo or '—' }}</td>
+          <td>{{ u.capacidad or '—' }}</td>
+          <td>{{ u.verificacion_vigencia or '—' }}</td>
+          <td>{{ u.seguro_vigencia or '—' }}</td>
+          <td><span class="estatus-badge estatus-{{ u.estatus }}">{{ u.estatus }}</span></td>
+          <td style="white-space:nowrap;">
+            <button type="button" class="btn btn-secondary btn-sm"
+              onclick='editar({{ u.id }}, {{ u.descripcion | tojson }}, {{ (u.placas or "") | tojson }}, {{ (u.tipo or "") | tojson }}, {{ (u.capacidad or "") | tojson }}, {{ (u.verificacion_vigencia or "") | tojson }}, {{ (u.seguro_vigencia or "") | tojson }})'>
+              Editar
+            </button>
+            <form method="POST" action="/embarques/unidades/estatus" style="display:inline"
+                  onsubmit="return confirm('&iquest;{{ 'Desactivar' if u.estatus == 'activo' else 'Reactivar' }} &laquo;{{ u.descripcion }}&raquo;?')">
+              <input type="hidden" name="unidad_id" value="{{ u.id }}">
+              <input type="hidden" name="estatus" value="{{ u.estatus }}">
+              <button type="submit" class="btn btn-secondary btn-sm">{{ 'Desactivar' if u.estatus == 'activo' else 'Reactivar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr" id="form-titulo">Nueva unidad</div>
+    <div class="card-body">
+      <form method="POST" action="/embarques/unidades" id="form-unidad">
+        <input type="hidden" name="unidad_id" id="f-id" value="">
+        <div class="form-grid">
+          <div class="field">
+            <label>Descripcion</label>
+            <input type="text" name="descripcion" id="f-descripcion" placeholder="Ej. Camioneta Nissan NP300" required>
+          </div>
+          <div class="field">
+            <label>Placas</label>
+            <input type="text" name="placas" id="f-placas">
+          </div>
+          <div class="field">
+            <label>Tipo</label>
+            <input type="text" name="tipo" id="f-tipo" placeholder="Camioneta, Torton, Motocicleta...">
+          </div>
+        </div>
+        <div class="form-grid" style="margin-top:14px;">
+          <div class="field">
+            <label>Capacidad de carga</label>
+            <input type="text" name="capacidad" id="f-capacidad" placeholder='Ej. "1.5 ton" o "20 cajas"'>
+          </div>
+          <div class="field">
+            <label>Vigencia de verificacion</label>
+            <input type="date" name="verificacion_vigencia" id="f-verif">
+          </div>
+          <div class="field">
+            <label>Vigencia de seguro</label>
+            <input type="date" name="seguro_vigencia" id="f-seguro">
+          </div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:8px;">
+          <button type="submit" class="btn btn-primary">Guardar</button>
+          <button type="button" class="btn btn-secondary" onclick="limpiar()">Cancelar edicion</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function editar(id, descripcion, placas, tipo, capacidad, verif, seguro) {
+    document.getElementById('form-titulo').textContent = 'Editar unidad';
+    document.getElementById('f-id').value = id;
+    document.getElementById('f-descripcion').value = descripcion;
+    document.getElementById('f-placas').value = placas;
+    document.getElementById('f-tipo').value = tipo;
+    document.getElementById('f-capacidad').value = capacidad;
+    document.getElementById('f-verif').value = verif;
+    document.getElementById('f-seguro').value = seguro;
+    document.getElementById('form-unidad').scrollIntoView({ behavior: 'smooth' });
+  }
+  function limpiar() {
+    document.getElementById('form-titulo').textContent = 'Nueva unidad';
+    document.getElementById('form-unidad').reset();
+    document.getElementById('f-id').value = '';
+  }
+</script>
+
+</body>
+</html>

@@ -290,6 +290,110 @@ def pagina_configuracion():
     )
 
 
+@embarques_bp.route("/embarques/choferes", methods=["GET", "POST"])
+@require_embarques
+def pagina_choferes():
+    if request.method == "POST":
+        chofer_id = request.form.get("chofer_id", "").strip()
+        nombre = request.form.get("nombre", "").strip()
+        if not nombre:
+            flash("El nombre es obligatorio.", "err")
+        else:
+            embarques_db.chofer_guardar(int(chofer_id) if chofer_id else None, request.form)
+            flash(f'Chofer "{nombre}" guardado.', "ok")
+        return redirect(url_for("embarques.pagina_choferes"))
+
+    return render_template(
+        "embarques_choferes.html", es_admin=(g.role == "admin"),
+        choferes=embarques_db.choferes_listar(),
+        unidades=embarques_db.unidades_listar(solo_activos=True),
+    )
+
+
+@embarques_bp.route("/embarques/choferes/estatus", methods=["POST"])
+@require_embarques
+def choferes_estatus():
+    chofer_id = int(request.form.get("chofer_id", 0) or 0)
+    nuevo = "inactivo" if request.form.get("estatus") == "activo" else "activo"
+    if chofer_id:
+        embarques_db.chofer_cambiar_estatus(chofer_id, nuevo)
+        flash(f"Chofer marcado como {nuevo}.", "ok")
+    return redirect(url_for("embarques.pagina_choferes"))
+
+
+@embarques_bp.route("/embarques/unidades", methods=["GET", "POST"])
+@require_embarques
+def pagina_unidades():
+    if request.method == "POST":
+        unidad_id = request.form.get("unidad_id", "").strip()
+        descripcion = request.form.get("descripcion", "").strip()
+        if not descripcion:
+            flash("La descripcion es obligatoria.", "err")
+        else:
+            embarques_db.unidad_guardar(int(unidad_id) if unidad_id else None, request.form)
+            flash(f'Unidad "{descripcion}" guardada.', "ok")
+        return redirect(url_for("embarques.pagina_unidades"))
+
+    return render_template(
+        "embarques_unidades.html", es_admin=(g.role == "admin"),
+        unidades=embarques_db.unidades_listar(),
+    )
+
+
+@embarques_bp.route("/embarques/unidades/estatus", methods=["POST"])
+@require_embarques
+def unidades_estatus():
+    unidad_id = int(request.form.get("unidad_id", 0) or 0)
+    nuevo = "inactivo" if request.form.get("estatus") == "activo" else "activo"
+    if unidad_id:
+        embarques_db.unidad_cambiar_estatus(unidad_id, nuevo)
+        flash(f"Unidad marcada como {nuevo}.", "ok")
+    return redirect(url_for("embarques.pagina_unidades"))
+
+
+@embarques_bp.route("/api/choferes")
+@require_embarques
+def api_choferes():
+    return jsonify({"ok": True, "data": embarques_db.choferes_listar(solo_activos=True)})
+
+
+@embarques_bp.route("/api/unidades")
+@require_embarques
+def api_unidades():
+    return jsonify({"ok": True, "data": embarques_db.unidades_listar(solo_activos=True)})
+
+
+# ── Reportes de rutas ────────────────────────────────────────────────────
+
+@embarques_bp.route("/embarques/reportes")
+@require_embarques
+def pagina_reportes():
+    return render_template("embarques_reportes.html", es_admin=(g.role == "admin"))
+
+
+@embarques_bp.route("/api/reportes/entregas")
+@require_embarques
+def api_reporte_entregas():
+    empresa = _empresa_actual()
+    hoy = datetime.date.today()
+    desde = request.args.get("desde", "").strip() or (hoy - datetime.timedelta(days=7)).isoformat()
+    hasta = request.args.get("hasta", "").strip() or hoy.isoformat()
+    chofer_id = request.args.get("chofer_id", "").strip()
+
+    try:
+        entregas = embarques_db.reporte_entregas(empresa, desde, hasta, int(chofer_id) if chofer_id else None)
+        totales = embarques_db.reporte_totales_por_chofer(empresa, desde, hasta)
+        puntos = [
+            {"lat": e["lat_entrega"], "lon": e["lon_entrega"], "folio": f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}",
+             "cliente": e["dest_nombre"], "chofer": e["chofer"] or e["paqueteria"], "fecha": e["fecha_entrega"]}
+            for e in entregas if e["lat_entrega"] is not None and e["lon_entrega"] is not None
+        ]
+        return jsonify({"ok": True, "entregas": entregas, "totales_por_chofer": totales, "puntos_mapa": puntos,
+                         "desde": desde, "hasta": hasta})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ── Confirmacion de entrega (publica, sin login -- el chofer no tiene cuenta) ─
 
 @embarques_bp.route("/entrega/<token>")
@@ -368,7 +472,10 @@ def api_listar():
 def _leer_datos_embarque(body, requerido):
     """Valida tipo_embarque/chofer/unidad/paqueteria/guia/num_bultos de un body JSON.
     Si requerido es False y no viene tipo_embarque, regresa (None, None): al crear
-    una etiqueta estos datos son opcionales (se pueden completar despues)."""
+    una etiqueta estos datos son opcionales (se pueden completar despues).
+    chofer/unidad vienen del catalogo formal: chofer_id/unidad_id (seleccionado de
+    un <select>) o chofer_nuevo/unidad_nuevo (texto, opcion "+ Nuevo...", se crea
+    en el catalogo de una vez)."""
     tipo = body.get("tipo_embarque")
     if not tipo:
         if requerido:
@@ -376,10 +483,38 @@ def _leer_datos_embarque(body, requerido):
         return None, None
     if tipo not in ("propio", "paqueteria"):
         return None, "Tipo de embarque invalido."
-    if tipo == "propio" and not (body.get("chofer") or "").strip():
-        return None, "Indica el chofer."
-    if tipo == "paqueteria" and not (body.get("paqueteria") or "").strip():
+
+    chofer_id = unidad_id = None
+    chofer_nombre = unidad_nombre = ""
+    if tipo == "propio":
+        if body.get("chofer_id"):
+            try:
+                chofer_id = int(body["chofer_id"])
+            except (TypeError, ValueError):
+                return None, "Chofer invalido."
+            c = embarques_db.chofer_obtener(chofer_id)
+            if not c:
+                return None, "Chofer invalido."
+            chofer_nombre = c["nombre"]
+        elif (body.get("chofer_nuevo") or "").strip():
+            chofer_id, chofer_nombre = embarques_db.chofer_obtener_o_crear(body["chofer_nuevo"])
+        if not chofer_nombre:
+            return None, "Indica el chofer."
+
+        if body.get("unidad_id"):
+            try:
+                unidad_id = int(body["unidad_id"])
+            except (TypeError, ValueError):
+                return None, "Unidad invalida."
+            u = embarques_db.unidad_obtener(unidad_id)
+            if not u:
+                return None, "Unidad invalida."
+            unidad_nombre = u["descripcion"]
+        elif (body.get("unidad_nuevo") or "").strip():
+            unidad_id, unidad_nombre = embarques_db.unidad_obtener_o_crear(body["unidad_nuevo"])
+    elif tipo == "paqueteria" and not (body.get("paqueteria") or "").strip():
         return None, "Indica la paqueteria."
+
     try:
         num_bultos = int(body.get("num_bultos") or 1)
         if not (1 <= num_bultos <= 200):
@@ -389,8 +524,10 @@ def _leer_datos_embarque(body, requerido):
 
     return {
         "tipo_embarque": tipo,
-        "chofer": (body.get("chofer") or "").strip(),
-        "unidad": (body.get("unidad") or "").strip(),
+        "chofer": chofer_nombre,
+        "unidad": unidad_nombre,
+        "chofer_id": chofer_id,
+        "unidad_id": unidad_id,
         "paqueteria": (body.get("paqueteria") or "").strip(),
         "guia": (body.get("guia") or "").strip(),
         "num_bultos": num_bultos,

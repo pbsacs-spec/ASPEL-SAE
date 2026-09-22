@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Choferes - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 860px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr { background: #f7f9fc; border-bottom: 1px solid #e0e4ea; padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c; }
+    .card-body { padding: 20px; }
+
+    .flash { padding: 10px 16px; border-radius: 8px; font-size: .87rem; margin-bottom: 4px; }
+    .flash.ok  { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    .flash.err { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fbff; }
+    .empty-row td { text-align: center; color: #aaa; padding: 24px; font-size: .85rem; }
+    .inactivo td { color: #999; }
+
+    .estatus-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: .74rem; font-weight: 600; }
+    .estatus-activo   { background: #eafaf1; color: #1e8449; }
+    .estatus-inactivo { background: #f0f0f0; color: #888; }
+
+    label { display: block; font-size: .85rem; font-weight: 600; color: #333; margin-bottom: 5px; }
+    .hint { font-size: .78rem; color: #888; font-weight: 400; margin-top: 4px; }
+    input[type=text], input[type=date], select {
+      width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px;
+      font-size: .88rem; color: #222;
+    }
+    input:focus, select:focus { outline: none; border-color: #1a3a5c; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } }
+    .field { margin-bottom: 4px; }
+
+    .btn { padding: 8px 16px; border: none; border-radius: 7px; font-size: .83rem; font-weight: 600; cursor: pointer; }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: #1a3a5c; color: #fff; }
+    .btn-secondary { background: #e8ecf0; color: #333; }
+    .btn-sm { padding: 5px 11px; font-size: .78rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Choferes &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/embarques">Embarques</a>
+    <a href="/embarques/unidades">Unidades</a>
+    <a href="/embarques/reportes">Reportes</a>
+    <a href="/">Inventario</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in msgs %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="card">
+    <div class="card-hdr">Choferes registrados</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Nombre</th><th>Telefono</th><th>Licencia</th><th>Unidad por defecto</th><th>Estatus</th><th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not choferes %}
+          <tr class="empty-row"><td colspan="6">No hay choferes registrados.</td></tr>
+        {% endif %}
+        {% for c in choferes %}
+        <tr class="{{ 'inactivo' if c.estatus == 'inactivo' else '' }}">
+          <td><strong>{{ c.nombre }}</strong></td>
+          <td>{{ c.telefono or '—' }}</td>
+          <td>{{ c.licencia_numero or '—' }}{% if c.licencia_vigencia %} <span class="hint">(vig. {{ c.licencia_vigencia }})</span>{% endif %}</td>
+          <td>
+            {% set ud = unidades | selectattr('id', 'equalto', c.unidad_default_id) | list %}
+            {{ ud[0].descripcion if ud else '—' }}
+          </td>
+          <td><span class="estatus-badge estatus-{{ c.estatus }}">{{ c.estatus }}</span></td>
+          <td style="white-space:nowrap;">
+            <button type="button" class="btn btn-secondary btn-sm"
+              onclick='editar({{ c.id }}, {{ c.nombre | tojson }}, {{ (c.telefono or "") | tojson }}, {{ (c.licencia_numero or "") | tojson }}, {{ (c.licencia_vigencia or "") | tojson }}, {{ (c.unidad_default_id or "") | tojson }})'>
+              Editar
+            </button>
+            <form method="POST" action="/embarques/choferes/estatus" style="display:inline"
+                  onsubmit="return confirm('&iquest;{{ 'Desactivar' if c.estatus == 'activo' else 'Reactivar' }} a &laquo;{{ c.nombre }}&raquo;?')">
+              <input type="hidden" name="chofer_id" value="{{ c.id }}">
+              <input type="hidden" name="estatus" value="{{ c.estatus }}">
+              <button type="submit" class="btn btn-secondary btn-sm">{{ 'Desactivar' if c.estatus == 'activo' else 'Reactivar' }}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr" id="form-titulo">Nuevo chofer</div>
+    <div class="card-body">
+      <form method="POST" action="/embarques/choferes" id="form-chofer">
+        <input type="hidden" name="chofer_id" id="f-id" value="">
+        <div class="form-grid">
+          <div class="field">
+            <label>Nombre</label>
+            <input type="text" name="nombre" id="f-nombre" required>
+          </div>
+          <div class="field">
+            <label>Telefono</label>
+            <input type="text" name="telefono" id="f-telefono" placeholder="Para relacionar con WhatsApp">
+          </div>
+        </div>
+        <div class="form-grid" style="margin-top:14px;">
+          <div class="field">
+            <label>Numero de licencia</label>
+            <input type="text" name="licencia_numero" id="f-licencia">
+          </div>
+          <div class="field">
+            <label>Vigencia de licencia</label>
+            <input type="date" name="licencia_vigencia" id="f-licencia-vig">
+          </div>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>Unidad asignada por defecto</label>
+          <select name="unidad_default_id" id="f-unidad">
+            <option value="">(ninguna)</option>
+            {% for u in unidades %}
+              <option value="{{ u.id }}">{{ u.descripcion }}</option>
+            {% endfor %}
+          </select>
+          <div class="hint">Se preseleccionara sola al elegir este chofer en una etiqueta.</div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:8px;">
+          <button type="submit" class="btn btn-primary">Guardar</button>
+          <button type="button" class="btn btn-secondary" onclick="limpiar()">Cancelar edicion</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function editar(id, nombre, telefono, licencia, licenciaVig, unidadId) {
+    document.getElementById('form-titulo').textContent = 'Editar chofer';
+    document.getElementById('f-id').value = id;
+    document.getElementById('f-nombre').value = nombre;
+    document.getElementById('f-telefono').value = telefono;
+    document.getElementById('f-licencia').value = licencia;
+    document.getElementById('f-licencia-vig').value = licenciaVig;
+    document.getElementById('f-unidad').value = unidadId;
+    document.getElementById('form-chofer').scrollIntoView({ behavior: 'smooth' });
+  }
+  function limpiar() {
+    document.getElementById('form-titulo').textContent = 'Nuevo chofer';
+    document.getElementById('form-chofer').reset();
+    document.getElementById('f-id').value = '';
+  }
+</script>
+
+</body>
+</html>

@@ -151,11 +151,11 @@
 
           <div id="campos-propio" class="campo-embarque">
             <label>Chofer</label>
-            <input type="text" id="e-chofer" list="lista-chofer">
-            <datalist id="lista-chofer"></datalist>
+            <select id="e-chofer-sel" onchange="onCambioChofer('e')"></select>
+            <input type="text" id="e-chofer-nuevo" placeholder="Nombre del chofer nuevo" style="display:none; margin-top:6px;">
             <label>Unidad</label>
-            <input type="text" id="e-unidad" list="lista-unidad">
-            <datalist id="lista-unidad"></datalist>
+            <select id="e-unidad-sel" onchange="onCambioUnidad('e')"></select>
+            <input type="text" id="e-unidad-nuevo" placeholder="Descripcion de la unidad nueva" style="display:none; margin-top:6px;">
           </div>
 
           <div id="campos-paqueteria" class="campo-embarque">
@@ -205,9 +205,44 @@
       }
     } catch (e) { /* autocompletado opcional, no bloquea el formulario */ }
   }
-  cargarCatalogo('chofer', 'lista-chofer');
-  cargarCatalogo('unidad', 'lista-unidad');
   cargarCatalogo('paqueteria', 'lista-paqueteria');
+
+  let CHOFERES = [];
+  let UNIDADES = [];
+
+  function llenarSelect(sel, items, campoId, campoTexto) {
+    sel.innerHTML = '<option value="">Selecciona...</option>' +
+      items.map(it => `<option value="${it[campoId]}">${escH(it[campoTexto])}</option>`).join('') +
+      '<option value="__nuevo__">+ Nuevo...</option>';
+  }
+
+  async function cargarChoferesYUnidades() {
+    try {
+      const [cr, ur] = await Promise.all([
+        fetch('/api/choferes').then(r => r.json()),
+        fetch('/api/unidades').then(r => r.json()),
+      ]);
+      if (cr.ok) { CHOFERES = cr.data; llenarSelect(document.getElementById('e-chofer-sel'), CHOFERES, 'id', 'nombre'); }
+      if (ur.ok) { UNIDADES = ur.data; llenarSelect(document.getElementById('e-unidad-sel'), UNIDADES, 'id', 'descripcion'); }
+    } catch (e) { /* selects quedan solo con "+ Nuevo..." */ }
+  }
+  cargarChoferesYUnidades();
+
+  function onCambioChofer(prefijo) {
+    const sel = document.getElementById(`${prefijo}-chofer-sel`);
+    document.getElementById(`${prefijo}-chofer-nuevo`).style.display = sel.value === '__nuevo__' ? 'block' : 'none';
+    if (sel.value && sel.value !== '__nuevo__') {
+      const chofer = CHOFERES.find(c => String(c.id) === sel.value);
+      if (chofer && chofer.unidad_default_id) {
+        document.getElementById(`${prefijo}-unidad-sel`).value = String(chofer.unidad_default_id);
+        onCambioUnidad(prefijo);
+      }
+    }
+  }
+  function onCambioUnidad(prefijo) {
+    const sel = document.getElementById(`${prefijo}-unidad-sel`);
+    document.getElementById(`${prefijo}-unidad-nuevo`).style.display = sel.value === '__nuevo__' ? 'block' : 'none';
+  }
 
   function empresaActual() {
     const sel = document.getElementById('empresa');
@@ -329,14 +364,21 @@
     };
 
     const tipoEmbarque = document.getElementById('e-tipo').value;
-    const embarque = tipoEmbarque ? {
-      tipo_embarque: tipoEmbarque,
-      chofer: document.getElementById('e-chofer').value.trim(),
-      unidad: document.getElementById('e-unidad').value.trim(),
-      paqueteria: document.getElementById('e-paqueteria').value.trim(),
-      guia: document.getElementById('e-guia').value.trim(),
-      num_bultos: parseInt(document.getElementById('e-bultos').value, 10) || 1,
-    } : null;
+    let embarque = null;
+    if (tipoEmbarque) {
+      embarque = {
+        tipo_embarque: tipoEmbarque,
+        paqueteria: document.getElementById('e-paqueteria').value.trim(),
+        guia: document.getElementById('e-guia').value.trim(),
+        num_bultos: parseInt(document.getElementById('e-bultos').value, 10) || 1,
+      };
+      const choferSel = document.getElementById('e-chofer-sel').value;
+      if (choferSel === '__nuevo__') embarque.chofer_nuevo = document.getElementById('e-chofer-nuevo').value.trim();
+      else if (choferSel) embarque.chofer_id = choferSel;
+      const unidadSel = document.getElementById('e-unidad-sel').value;
+      if (unidadSel === '__nuevo__') embarque.unidad_nuevo = document.getElementById('e-unidad-nuevo').value.trim();
+      else if (unidadSel) embarque.unidad_id = unidadSel;
+    }
 
     try {
       const empresa = empresaActual();

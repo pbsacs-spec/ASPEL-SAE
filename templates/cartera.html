@@ -155,6 +155,8 @@
   const fmt  = v => Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtP = v => '$' + fmt(v);
   const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const escJS = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');
+  const escA = s => escH(escJS(s));
   const CLASIF_LABEL = { saludable: 'Saludable', atencion: 'Atencion', atrasado: 'Atrasado', moroso: 'Moroso' };
 
   function empresaActual() {
@@ -250,7 +252,7 @@
       <th onclick="ordenar('clasificacion')">Estado</th>
     </tr></thead><tbody>`;
     datos.forEach(f => {
-      html += `<tr class="fila-cliente" onclick="verDetalle('${escH(f.clave)}','${escH(f.nombre)}')">
+      html += `<tr class="fila-cliente" onclick="verDetalle('${escA(f.clave)}','${escA(f.nombre)}')">
         <td><strong>${escH(f.nombre)}</strong></td>
         <td class="num">${fmtP(f.saldo)}</td>
         <td class="num">${f.dias_credito}</td>

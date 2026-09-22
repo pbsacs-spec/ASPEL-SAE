@@ -609,7 +609,8 @@
   const fmtP = v => v == null ? '—' : Number(v).toLocaleString('es-MX', fmtOpts);
   const hoy  = () => new Date().toISOString().slice(0, 10);
   const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const escA = s => String(s ?? '').replace(/'/g,"\\'");
+  const escJS = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');
+  const escA = s => escH(escJS(s));
 </script>
 
 <script src="/static/vendor/xlsx.full.min.js"></script>

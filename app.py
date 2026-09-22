@@ -1,3 +1,6 @@
+import os
+import secrets
+
 from flask import Flask, render_template, request, jsonify, g
 
 from db import query, get_almacenes, load_empresas
@@ -7,8 +10,22 @@ from ventas import ventas_bp
 from cartera import cartera_bp
 from auth import require_dashboard
 
+
+def _cargar_secret_key():
+    env_key = os.environ.get("ASPEL_SECRET_KEY")
+    if env_key:
+        return env_key
+    ruta = os.path.join(os.path.dirname(__file__), ".secret_key")
+    if os.path.exists(ruta):
+        return open(ruta, "r", encoding="utf-8").read().strip()
+    clave = secrets.token_hex(32)
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write(clave)
+    return clave
+
+
 app = Flask(__name__)
-app.secret_key = "aspel_sae_secret_2024"
+app.secret_key = _cargar_secret_key()
 app.register_blueprint(wa_bp)
 app.register_blueprint(db_admin_bp)
 app.register_blueprint(ventas_bp)

@@ -2,6 +2,7 @@
 auth_config.ini
 db_config.ini
 wa_config.ini
+.secret_key
 
 # Sesion de WhatsApp (credenciales del dispositivo vinculado)
 wa_service/wa_session/

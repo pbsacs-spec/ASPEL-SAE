@@ -12,11 +12,17 @@ import configparser
 import functools
 import os
 import secrets
+import threading
 
 from flask import request, Response, g
 from werkzeug.security import generate_password_hash, check_password_hash
 
 _CFG_FILE = os.path.join(os.path.dirname(__file__), "auth_config.ini")
+
+# Protege el ciclo leer->modificar->escribir de auth_config.ini: sin esto,
+# dos admins guardando/borrando cuentas casi al mismo tiempo pueden
+# pisarse el cambio uno al otro.
+_LOCK = threading.RLock()
 
 ROLES = ["vendedores", "administradores", "admin"]
 _SECTION_PREFIX = "user:"
@@ -36,8 +42,10 @@ def _leer_cfg():
 
 
 def _guardar_cfg(cfg):
-    with open(_CFG_FILE, "w", encoding="utf-8") as f:
+    tmp = _CFG_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         cfg.write(f)
+    os.replace(tmp, _CFG_FILE)
 
 
 def _migrar_formato_viejo(cfg):
@@ -80,20 +88,21 @@ def _generar_admin_inicial(cfg):
 
 
 def _cargar_usuarios():
-    cfg = _leer_cfg()
-    _migrar_formato_viejo(cfg)
-    usuarios = {
-        sec[len(_SECTION_PREFIX):]: {
-            "password_hash": cfg.get(sec, "password_hash", fallback=""),
-            "role":          cfg.get(sec, "role", fallback=""),
+    with _LOCK:
+        cfg = _leer_cfg()
+        _migrar_formato_viejo(cfg)
+        usuarios = {
+            sec[len(_SECTION_PREFIX):]: {
+                "password_hash": cfg.get(sec, "password_hash", fallback=""),
+                "role":          cfg.get(sec, "role", fallback=""),
+            }
+            for sec in cfg.sections()
+            if sec.startswith(_SECTION_PREFIX)
         }
-        for sec in cfg.sections()
-        if sec.startswith(_SECTION_PREFIX)
-    }
-    if not usuarios:
-        _generar_admin_inicial(cfg)
-        return _cargar_usuarios()
-    return usuarios
+        if not usuarios:
+            _generar_admin_inicial(cfg)
+            return _cargar_usuarios()
+        return usuarios
 
 
 def list_users():
@@ -113,31 +122,33 @@ def set_user(username, password, role):
     if len(password) < 6:
         return False, "La contrasena debe tener al menos 6 caracteres."
 
-    cfg = _leer_cfg()
-    _migrar_formato_viejo(cfg)
-    cfg[_SECTION_PREFIX + username] = {
-        "password_hash": generate_password_hash(password),
-        "role":          role,
-    }
-    _guardar_cfg(cfg)
+    with _LOCK:
+        cfg = _leer_cfg()
+        _migrar_formato_viejo(cfg)
+        cfg[_SECTION_PREFIX + username] = {
+            "password_hash": generate_password_hash(password),
+            "role":          role,
+        }
+        _guardar_cfg(cfg)
     return True, None
 
 
 def delete_user(username):
     """Elimina un usuario. Retorna (ok, error). Evita quedarte sin ningun admin."""
-    usuarios = _cargar_usuarios()
-    if username not in usuarios:
-        return False, "Usuario no encontrado."
+    with _LOCK:
+        usuarios = _cargar_usuarios()
+        if username not in usuarios:
+            return False, "Usuario no encontrado."
 
-    otros_admin = [u for u, d in usuarios.items() if d["role"] == "admin" and u != username]
-    if usuarios[username]["role"] == "admin" and not otros_admin:
-        return False, "No puedes eliminar la unica cuenta con rol admin."
+        otros_admin = [u for u, d in usuarios.items() if d["role"] == "admin" and u != username]
+        if usuarios[username]["role"] == "admin" and not otros_admin:
+            return False, "No puedes eliminar la unica cuenta con rol admin."
 
-    cfg = _leer_cfg()
-    _migrar_formato_viejo(cfg)
-    cfg.remove_section(_SECTION_PREFIX + username)
-    _guardar_cfg(cfg)
-    return True, None
+        cfg = _leer_cfg()
+        _migrar_formato_viejo(cfg)
+        cfg.remove_section(_SECTION_PREFIX + username)
+        _guardar_cfg(cfg)
+        return True, None
 
 
 def _credenciales_validas(username, password):

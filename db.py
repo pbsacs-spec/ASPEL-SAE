@@ -1,10 +1,22 @@
 import configparser
 import os
+import threading
 import fdb
 
 _CFG_FILE        = os.path.join(os.path.dirname(__file__), "db_config.ini")
 _DEFAULT_DB_PATH = r"D:\2-Dacaspel\Sistemas Aspel\SAE9.00\Empresa01\Datos\SAE90EMPRE01.FDB"
 _DEFAULT_FB_LIB  = r"C:\Program Files\Firebird\Firebird_2_5\bin\fbclient.dll"
+
+# Protege el ciclo leer->modificar->escribir de db_config.ini: sin esto, dos
+# requests casi simultaneas (p.ej. dos admins guardando empresas distintas)
+# pueden pisarse el cambio una a la otra.
+_LOCK = threading.RLock()
+
+
+def config_lock():
+    """Lock a usar por quien haga load_empresas() + ... + save_empresas()
+    fuera de este modulo, para que todo el ciclo quede serializado."""
+    return _LOCK
 
 
 def load_empresas():
@@ -57,8 +69,11 @@ def save_empresas(empresas, settings):
             "nombre":  edata.get("nombre",  eid),
             "db_path": edata.get("db_path", ""),
         }
-    with open(_CFG_FILE, "w", encoding="utf-8") as f:
-        cfg.write(f)
+    with _LOCK:
+        tmp = _CFG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            cfg.write(f)
+        os.replace(tmp, _CFG_FILE)
 
 
 def load_config():

@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g
-from db import load_empresas, save_empresas
+from db import load_empresas, save_empresas, config_lock
 from auth import require_admin, list_users, set_user, delete_user, ROLES
 
 db_admin_bp = Blueprint("db_admin", __name__)
@@ -36,13 +36,14 @@ def config_guardar():
         flash("El nombre y la ruta de BD son obligatorios.", "err")
         return redirect(url_for("db_admin.config_pagina"))
 
-    empresas, settings = load_empresas()
+    with config_lock():
+        empresas, settings = load_empresas()
 
-    if not empresa_id or empresa_id not in empresas:
-        empresa_id = _siguiente_id(empresas)
+        if not empresa_id or empresa_id not in empresas:
+            empresa_id = _siguiente_id(empresas)
 
-    empresas[empresa_id] = {"nombre": nombre, "db_path": db_path}
-    save_empresas(empresas, settings)
+        empresas[empresa_id] = {"nombre": nombre, "db_path": db_path}
+        save_empresas(empresas, settings)
     flash(f"Empresa \"{nombre}\" guardada.", "ok")
     return redirect(url_for("db_admin.config_pagina"))
 
@@ -50,23 +51,24 @@ def config_guardar():
 @db_admin_bp.route("/admin/database/eliminar", methods=["POST"])
 def config_eliminar():
     empresa_id = request.form.get("empresa_id", "").strip()
-    empresas, settings = load_empresas()
+    with config_lock():
+        empresas, settings = load_empresas()
 
-    if empresa_id not in empresas:
-        flash("Empresa no encontrada.", "err")
-        return redirect(url_for("db_admin.config_pagina"))
+        if empresa_id not in empresas:
+            flash("Empresa no encontrada.", "err")
+            return redirect(url_for("db_admin.config_pagina"))
 
-    if len(empresas) <= 1:
-        flash("Debe haber al menos una empresa registrada.", "err")
-        return redirect(url_for("db_admin.config_pagina"))
+        if len(empresas) <= 1:
+            flash("Debe haber al menos una empresa registrada.", "err")
+            return redirect(url_for("db_admin.config_pagina"))
 
-    nombre = empresas[empresa_id]["nombre"]
-    del empresas[empresa_id]
+        nombre = empresas[empresa_id]["nombre"]
+        del empresas[empresa_id]
 
-    if settings["default"] == empresa_id:
-        settings["default"] = next(iter(empresas))
+        if settings["default"] == empresa_id:
+            settings["default"] = next(iter(empresas))
 
-    save_empresas(empresas, settings)
+        save_empresas(empresas, settings)
     flash(f"Empresa \"{nombre}\" eliminada.", "ok")
     return redirect(url_for("db_admin.config_pagina"))
 
@@ -74,15 +76,16 @@ def config_eliminar():
 @db_admin_bp.route("/admin/database/predeterminar", methods=["POST"])
 def config_predeterminar():
     empresa_id = request.form.get("empresa_id", "").strip()
-    empresas, settings = load_empresas()
+    with config_lock():
+        empresas, settings = load_empresas()
 
-    if empresa_id not in empresas:
-        flash("Empresa no encontrada.", "err")
-        return redirect(url_for("db_admin.config_pagina"))
+        if empresa_id not in empresas:
+            flash("Empresa no encontrada.", "err")
+            return redirect(url_for("db_admin.config_pagina"))
 
-    settings["default"] = empresa_id
-    save_empresas(empresas, settings)
-    nombre = empresas[empresa_id]["nombre"]
+        settings["default"] = empresa_id
+        save_empresas(empresas, settings)
+        nombre = empresas[empresa_id]["nombre"]
     flash(f"\"{nombre}\" establecida como empresa predeterminada.", "ok")
     return redirect(url_for("db_admin.config_pagina"))
 
@@ -93,9 +96,10 @@ def config_fb_lib():
     if not fb_lib:
         flash("Indica la ruta de fbclient.dll.", "err")
         return redirect(url_for("db_admin.config_pagina"))
-    empresas, settings = load_empresas()
-    settings["fb_lib"] = fb_lib
-    save_empresas(empresas, settings)
+    with config_lock():
+        empresas, settings = load_empresas()
+        settings["fb_lib"] = fb_lib
+        save_empresas(empresas, settings)
     flash("Ruta de Firebird guardada. Reinicia los servicios para que tome efecto.", "ok")
     return redirect(url_for("db_admin.config_pagina"))
 

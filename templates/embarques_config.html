@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configurar emisor - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 720px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr { background: #f7f9fc; border-bottom: 1px solid #e0e4ea; padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c; }
+    .card-body { padding: 20px; }
+
+    .flash { padding: 10px 16px; border-radius: 8px; font-size: .87rem; margin-bottom: 4px; }
+    .flash.ok  { background: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    .flash.err { background: #fdecea; color: #922b21; border: 1px solid #f5c6c6; }
+
+    label { display: block; font-size: .85rem; font-weight: 600; color: #333; margin-bottom: 5px; margin-top: 14px; }
+    label:first-child { margin-top: 0; }
+    .hint { font-size: .78rem; color: #888; font-weight: 400; margin-top: 4px; }
+    input[type=text] {
+      width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px; font-size: .88rem;
+    }
+    input:focus { outline: none; border-color: #1a3a5c; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    @media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } }
+
+    .btn { padding: 8px 16px; border: none; border-radius: 7px; font-size: .83rem; font-weight: 600; cursor: pointer; background: #1a3a5c; color: #fff; }
+    .btn:hover { opacity: .85; }
+
+    .note {
+      font-size: .8rem; color: #777; background: #fffbea;
+      border: 1px solid #ffe58f; border-radius: 7px; padding: 9px 13px; margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Configurar emisor &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/embarques">Embarques</a>
+    <a href="/">Inventario</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in msgs %}
+      <div class="flash {{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="card">
+    <div class="card-body">
+      {% if empresas|length > 1 %}
+      <label>Empresa</label>
+      <select id="empresa-sel" onchange="location.href='/embarques/configuracion?empresa=' + this.value">
+        {% for eid, emp in empresas.items() %}
+          <option value="{{ eid }}" {% if eid == empresa_id %}selected{% endif %}>{{ emp.nombre }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">Datos del emisor (aparecen en la etiqueta de embarque)</div>
+    <div class="card-body">
+      <form method="POST" action="/embarques/configuracion?empresa={{ empresa_id }}">
+        <label>Nombre de la empresa</label>
+        <input type="text" name="nombre_empresa" value="{{ datos.nombre_empresa }}" placeholder="Ej: Mi Empresa SA de CV" required>
+        <div class="hint">Aspel SAE guarda este dato encriptado y no se puede leer automaticamente: captura aqui el nombre tal como debe aparecer en la etiqueta.</div>
+
+        <label>RFC</label>
+        <input type="text" name="rfc" value="{{ datos.rfc }}">
+
+        <div class="form-grid">
+          <div>
+            <label>Calle</label>
+            <input type="text" name="calle" value="{{ datos.calle }}">
+          </div>
+          <div>
+            <label>Numero ext. / int.</label>
+            <input type="text" name="numext" value="{{ datos.numext }}" placeholder="Ext.">
+            <input type="text" name="numint" value="{{ datos.numint }}" placeholder="Int." style="margin-top:6px;">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Colonia</label>
+            <input type="text" name="colonia" value="{{ datos.colonia }}">
+          </div>
+          <div>
+            <label>Codigo postal</label>
+            <input type="text" name="cp" value="{{ datos.cp }}">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Municipio</label>
+            <input type="text" name="municipio" value="{{ datos.municipio }}">
+          </div>
+          <div>
+            <label>Estado</label>
+            <input type="text" name="estado" value="{{ datos.estado }}">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Pais</label>
+            <input type="text" name="pais" value="{{ datos.pais }}">
+          </div>
+          <div>
+            <label>Telefono</label>
+            <input type="text" name="telefono" value="{{ datos.telefono }}">
+          </div>
+        </div>
+
+        <div style="margin-top:18px;">
+          <button type="submit" class="btn">Guardar</button>
+        </div>
+      </form>
+      <div class="note">
+        El RFC y la direccion se prellenaron, cuando fue posible, desde el domicilio fiscal
+        configurado en Aspel SAE. Revisalos y ajustalos antes de guardar.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

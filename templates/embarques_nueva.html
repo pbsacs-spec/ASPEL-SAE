@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nueva etiqueta - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 720px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr { background: #f7f9fc; border-bottom: 1px solid #e0e4ea; padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c; }
+    .card-body { padding: 20px; }
+
+    label { display: block; font-size: .82rem; font-weight: 600; color: #333; margin-bottom: 4px; margin-top: 12px; }
+    label:first-child { margin-top: 0; }
+    input[type=text] { width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px; font-size: .88rem; }
+    input:focus { outline: none; border-color: #1a3a5c; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    @media (max-width: 560px) { .form-grid { grid-template-columns: 1fr; } }
+
+    .btn { padding: 8px 16px; border: none; border-radius: 7px; font-size: .83rem; font-weight: 600; cursor: pointer; background: #1a3a5c; color: #fff; }
+    .btn:hover { opacity: .85; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-secondary { background: #e8ecf0; color: #333; }
+
+    #resultados { border: 1px solid #e0e4ea; border-radius: 8px; margin-top: 8px; max-height: 260px; overflow-y: auto; display: none; }
+    #resultados.visible { display: block; }
+    .resultado-item { padding: 10px 14px; border-bottom: 1px solid #eee; cursor: pointer; font-size: .87rem; }
+    .resultado-item:last-child { border-bottom: none; }
+    .resultado-item:hover { background: #f9fbff; }
+    .resultado-item .folio { font-weight: 600; color: #1a3a5c; }
+    .resultado-item .meta { color: #777; font-size: .8rem; }
+
+    .empty { color: #999; font-size: .85rem; padding: 8px 2px; }
+    .error-msg { color: #b02020; font-size: .85rem; padding: 8px 2px; }
+    .ok-msg { color: #1e8449; font-size: .85rem; padding: 8px 2px; }
+
+    #form-destinatario { display: none; }
+    #form-destinatario.visible { display: block; }
+    .factura-elegida { background: #eef4fb; border-radius: 8px; padding: 10px 14px; font-size: .87rem; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Nueva etiqueta de embarque &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/embarques">Embarques</a>
+    <a href="/">Inventario</a>
+  </div>
+</header>
+
+<div class="page">
+
+  <div class="card" id="empresa-card" style="display:none;">
+    <div class="card-body">
+      <label>Empresa</label>
+      <select id="empresa" onchange="limpiarBusqueda()"></select>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">1. Buscar factura</div>
+    <div class="card-body">
+      <label>Folio o nombre del cliente</label>
+      <input type="text" id="q" placeholder="Ej: 2259, o 'Grupo Textil'" oninput="buscar()">
+      <div id="resultados"></div>
+    </div>
+  </div>
+
+  <div class="card" id="card-destinatario" style="display:none;">
+    <div class="card-hdr">2. Datos de envio</div>
+    <div class="card-body">
+      <div class="factura-elegida" id="factura-elegida"></div>
+
+      <form id="form-destinatario" class="visible" onsubmit="return guardar(event)">
+        <label>Nombre / Razon social</label>
+        <input type="text" id="d-nombre" required>
+
+        <div class="form-grid">
+          <div>
+            <label>Calle</label>
+            <input type="text" id="d-calle">
+          </div>
+          <div>
+            <label>Numero ext. / int.</label>
+            <input type="text" id="d-numext" placeholder="Ext.">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Colonia</label>
+            <input type="text" id="d-colonia">
+          </div>
+          <div>
+            <label>Codigo postal</label>
+            <input type="text" id="d-cp">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Municipio</label>
+            <input type="text" id="d-municipio">
+          </div>
+          <div>
+            <label>Estado</label>
+            <input type="text" id="d-estado">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label>Pais</label>
+            <input type="text" id="d-pais">
+          </div>
+          <div>
+            <label>Telefono</label>
+            <input type="text" id="d-telefono">
+          </div>
+        </div>
+        <label>Referencia / indicaciones para la paqueteria</label>
+        <input type="text" id="d-referencia" placeholder="Entre calles, color de fachada, etc.">
+
+        <div id="guardar-msg"></div>
+
+        <div style="margin-top:18px; display:flex; gap:8px;">
+          <button type="submit" class="btn" id="btn-guardar">Crear etiqueta</button>
+          <button type="button" class="btn btn-secondary" onclick="cancelarSeleccion()">Elegir otra factura</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  let facturaElegida = null;
+
+  function empresaActual() {
+    const sel = document.getElementById('empresa');
+    return sel ? sel.value : '';
+  }
+
+  fetch('/api/empresas').then(r => r.json()).then(er => {
+    if (er.ok && er.data.length > 1) {
+      const sel = document.getElementById('empresa');
+      sel.innerHTML = er.data.map(e => `<option value="${e.id}">${escH(e.nombre)}</option>`).join('');
+      sel.value = er.default;
+      document.getElementById('empresa-card').style.display = 'block';
+    }
+  });
+
+  function limpiarBusqueda() {
+    document.getElementById('q').value = '';
+    document.getElementById('resultados').classList.remove('visible');
+    cancelarSeleccion();
+  }
+
+  let buscarTimer = null;
+  function buscar() {
+    clearTimeout(buscarTimer);
+    const q = document.getElementById('q').value.trim();
+    const cont = document.getElementById('resultados');
+    if (!q) { cont.classList.remove('visible'); return; }
+    buscarTimer = setTimeout(async () => {
+      cont.classList.add('visible');
+      cont.innerHTML = '<div class="empty">Buscando...</div>';
+      try {
+        const p = new URLSearchParams({ q });
+        const empresa = empresaActual();
+        if (empresa) p.set('empresa', empresa);
+        const res = await fetch('/api/facturas/buscar?' + p).then(r => r.json());
+        if (!res.ok) { cont.innerHTML = `<div class="error-msg">Error: ${res.error}</div>`; return; }
+        if (!res.data.length) { cont.innerHTML = '<div class="empty">Sin resultados.</div>'; return; }
+        window._resultadosBusqueda = res.data;
+        cont.innerHTML = res.data.map((f, i) => `
+          <div class="resultado-item" onclick="elegirFactura(${i})">
+            <span class="folio">${escH(f.serie)}${escH(f.folio)}</span> &mdash; ${escH(f.cliente_nombre)}
+            <div class="meta">${escH(f.fecha || '')}</div>
+          </div>
+        `).join('');
+      } catch (e) {
+        cont.innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+      }
+    }, 300);
+  }
+
+  async function elegirFactura(idx) {
+    const f = window._resultadosBusqueda[idx];
+    facturaElegida = f;
+    document.getElementById('resultados').classList.remove('visible');
+    document.getElementById('card-destinatario').style.display = 'block';
+    document.getElementById('factura-elegida').textContent =
+      `Factura ${f.serie}${f.folio} — ${f.cliente_nombre} — ${f.fecha || ''}`;
+    document.getElementById('guardar-msg').innerHTML = '';
+
+    try {
+      const p = new URLSearchParams();
+      const empresa = empresaActual();
+      if (empresa) p.set('empresa', empresa);
+      const res = await fetch(`/api/facturas/${encodeURIComponent(f.cve_doc)}/sugerido?` + p).then(r => r.json());
+      if (!res.ok) {
+        document.getElementById('guardar-msg').innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
+        return;
+      }
+      const d = res.data.destinatario;
+      document.getElementById('d-nombre').value = d.nombre || '';
+      document.getElementById('d-calle').value = d.calle || '';
+      document.getElementById('d-numext').value = d.numext || '';
+      document.getElementById('d-colonia').value = d.colonia || '';
+      document.getElementById('d-cp').value = d.cp || '';
+      document.getElementById('d-municipio').value = d.municipio || '';
+      document.getElementById('d-estado').value = d.estado || '';
+      document.getElementById('d-pais').value = d.pais || 'Mexico';
+      document.getElementById('d-telefono').value = d.telefono || '';
+      document.getElementById('d-referencia').value = d.referencia || '';
+    } catch (e) {
+      document.getElementById('guardar-msg').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+    }
+  }
+
+  function cancelarSeleccion() {
+    facturaElegida = null;
+    document.getElementById('card-destinatario').style.display = 'none';
+  }
+
+  async function guardar(ev) {
+    ev.preventDefault();
+    if (!facturaElegida) return false;
+
+    const btn = document.getElementById('btn-guardar');
+    const msg = document.getElementById('guardar-msg');
+    msg.innerHTML = '';
+    btn.disabled = true;
+    btn.textContent = 'Guardando...';
+
+    const destinatario = {
+      nombre: document.getElementById('d-nombre').value.trim(),
+      calle: document.getElementById('d-calle').value.trim(),
+      numext: document.getElementById('d-numext').value.trim(),
+      colonia: document.getElementById('d-colonia').value.trim(),
+      cp: document.getElementById('d-cp').value.trim(),
+      municipio: document.getElementById('d-municipio').value.trim(),
+      estado: document.getElementById('d-estado').value.trim(),
+      pais: document.getElementById('d-pais').value.trim(),
+      telefono: document.getElementById('d-telefono').value.trim(),
+      referencia: document.getElementById('d-referencia').value.trim(),
+    };
+
+    try {
+      const empresa = empresaActual();
+      const p = new URLSearchParams();
+      if (empresa) p.set('empresa', empresa);
+      const res = await fetch('/api/embarques?' + p, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ factura: facturaElegida, destinatario }),
+      }).then(r => r.json());
+
+      if (!res.ok) {
+        msg.innerHTML = `<div class="error-msg">${escH(res.error)}</div>`;
+        btn.disabled = false;
+        btn.textContent = 'Crear etiqueta';
+        return false;
+      }
+      if (res.duplicado) {
+        msg.innerHTML = '<div class="ok-msg">Etiqueta creada (ya existia otra etiqueta para esta factura).</div>';
+      }
+      window.location.href = '/embarques';
+    } catch (e) {
+      msg.innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+      btn.disabled = false;
+      btn.textContent = 'Crear etiqueta';
+    }
+    return false;
+  }
+</script>
+
+</body>
+</html>

@@ -2,7 +2,11 @@
 auth_config.ini
 db_config.ini
 wa_config.ini
+embarque_config.ini
 .secret_key
+
+# Datos de embarques (SQLite local, no es codigo)
+embarques.db
 
 # Sesion de WhatsApp (credenciales del dispositivo vinculado)
 wa_service/wa_session/

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Embarques - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 8px;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    .nav-links { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+    .nav-links a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    .nav-links a:hover { color: #fff; }
+
+    .page { max-width: 1150px; margin: 20px auto; padding: 0 16px; display: grid; gap: 16px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr {
+      background: #f7f9fc; border-bottom: 1px solid #e0e4ea;
+      padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    }
+    .card-body { padding: 18px; }
+
+    .filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    .fg { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+    .fg label { font-size: .78rem; font-weight: 600; color: #555; }
+    .fg select, .fg input { padding: 7px 10px; border: 1px solid #cdd1d9; border-radius: 6px; font-size: .87rem; }
+    #empresa-wrap { display: none; }
+
+    .btn { padding: 7px 16px; border: none; border-radius: 6px; font-size: .83rem; font-weight: 600; cursor: pointer; background: #1a3a5c; color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+    .btn:hover { opacity: .85; }
+    .btn-sm { padding: 5px 12px; font-size: .78rem; }
+    .btn-secondary { background: #e8ecf0; color: #333; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th { background: #f7f9fc; padding: 9px 12px; text-align: left; font-weight: 600;
+         color: #555; border-bottom: 2px solid #e0e4ea; white-space: nowrap; }
+    td { padding: 9px 12px; border-bottom: 1px solid #eee; vertical-align: middle; }
+    tr:hover td { background: #f9fbff; }
+
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: .72rem; font-weight: 600; }
+    .badge-pendiente { background: #fff3d6; color: #8a6200; }
+    .badge-embarcado { background: #eafaf1; color: #1e8449; }
+
+    .table-scroll { overflow-x: auto; }
+    .empty { text-align: center; color: #999; padding: 40px; font-size: .9rem; }
+    .error-msg { text-align: center; color: #b02020; padding: 40px; font-size: .9rem; }
+
+    .overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
+      align-items: center; justify-content: center; z-index: 50;
+    }
+    .overlay.show { display: flex; }
+    .modal { background: #fff; border-radius: 10px; width: 92%; max-width: 480px; max-height: 82vh; display: flex; flex-direction: column; }
+    .modal-hdr { padding: 14px 18px; border-bottom: 1px solid #e0e4ea; display: flex; justify-content: space-between; align-items: center; }
+    .modal-hdr h2 { font-size: 1rem; color: #1a3a5c; }
+    .modal-hdr button { border: none; background: none; font-size: 1.3rem; cursor: pointer; color: #888; }
+    .modal-body { overflow-y: auto; padding: 18px; }
+
+    label { display: block; font-size: .82rem; font-weight: 600; color: #333; margin-bottom: 4px; margin-top: 12px; }
+    label:first-child { margin-top: 0; }
+    input[type=text], select { width: 100%; padding: 8px 10px; border: 1px solid #cdd1d9; border-radius: 6px; font-size: .87rem; }
+    .campo-embarque { display: none; }
+    .campo-embarque.visible { display: block; }
+    .modal-err { color: #b02020; font-size: .82rem; margin-top: 10px; display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Embarques &mdash; Aspel SAE</h1>
+  <div class="nav-links">
+    <a href="/">Inventario</a>
+    <a href="/ventas">Ventas</a>
+    <a href="/cartera">Cartera</a>
+    <a href="/embarques/configuracion">Configurar emisor</a>
+    {% if es_admin %}
+    <a href="/admin/database">Base de datos</a>
+    <a href="/admin/whatsapp">WhatsApp</a>
+    <a href="/admin/usuarios">Cuentas</a>
+    {% endif %}
+    <a class="btn btn-sm" href="/embarques/nueva">+ Nueva etiqueta</a>
+  </div>
+</header>
+
+<div class="page">
+
+  <div class="card">
+    <div class="card-body">
+      <div class="filtros">
+        <div class="fg" id="empresa-wrap">
+          <label>Empresa</label>
+          <select id="empresa" onchange="cargar()"></select>
+        </div>
+        <div class="fg">
+          <label>Estatus</label>
+          <select id="estatus" onchange="cargar()">
+            <option value="">Todos</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="embarcado">Embarcado</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>Desde</label>
+          <input type="date" id="desde" onchange="cargar()">
+        </div>
+        <div class="fg">
+          <label>Hasta</label>
+          <input type="date" id="hasta" onchange="cargar()">
+        </div>
+        <button class="btn" onclick="cargar()">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="contenedor">
+    <div class="empty">Cargando...</div>
+  </div>
+
+</div>
+
+<div class="overlay" id="overlay" onclick="cerrarModal(event)">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 id="modalTitulo"></h2>
+      <button onclick="cerrarModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+  let filas = [];
+
+  const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const escJS = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');
+  const escA = s => escH(escJS(s));
+
+  function empresaActual() {
+    const sel = document.getElementById('empresa');
+    return sel ? sel.value : '';
+  }
+
+  fetch('/api/empresas').then(r => r.json()).then(er => {
+    const sel = document.getElementById('empresa');
+    if (er.ok && er.data.length > 1) {
+      sel.innerHTML = er.data.map(e => `<option value="${e.id}">${escH(e.nombre)}</option>`).join('');
+      sel.value = er.default;
+      document.getElementById('empresa-wrap').style.display = 'flex';
+    }
+    cargar();
+  }).catch(cargar);
+
+  async function cargar() {
+    const empresa = empresaActual();
+    document.getElementById('contenedor').innerHTML = '<div class="empty">Consultando...</div>';
+    try {
+      const p = new URLSearchParams();
+      if (empresa) p.set('empresa', empresa);
+      const estatus = document.getElementById('estatus').value;
+      const desde = document.getElementById('desde').value;
+      const hasta = document.getElementById('hasta').value;
+      if (estatus) p.set('estatus', estatus);
+      if (desde) p.set('desde', desde);
+      if (hasta) p.set('hasta', hasta);
+
+      const res = await fetch('/api/embarques?' + p).then(r => r.json());
+      if (!res.ok) {
+        document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error: ${res.error}</div>`;
+        return;
+      }
+      filas = res.data;
+      render();
+    } catch (e) {
+      document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
+    }
+  }
+
+  function render() {
+    const cont = document.getElementById('contenedor');
+    if (!filas.length) {
+      cont.innerHTML = '<div class="card"><div class="empty">Sin etiquetas de embarque con estos filtros.</div></div>';
+      return;
+    }
+    cont.innerHTML = `
+      <div class="card">
+        <div class="card-hdr">Etiquetas (${filas.length})</div>
+        <div class="table-scroll">${tablaHtml()}</div>
+      </div>
+    `;
+  }
+
+  function tablaHtml() {
+    let html = `<table><thead><tr>
+      <th>Factura</th><th>Destinatario</th><th>Creado</th><th>Estatus</th><th>Embarque</th><th>Acciones</th>
+    </tr></thead><tbody>`;
+    filas.forEach(f => {
+      const folio = `${f.factura_serie || ''}${f.factura_folio || ''}`;
+      let embarqueTxt = '&mdash;';
+      if (f.estatus === 'embarcado') {
+        embarqueTxt = f.tipo_embarque === 'propio'
+          ? `Propio: ${escH(f.chofer || '')} / ${escH(f.unidad || '')}`
+          : `${escH(f.paqueteria || '')} (guia ${escH(f.guia || '')})`;
+      }
+      html += `<tr>
+        <td><strong>${escH(folio)}</strong></td>
+        <td>${escH(f.dest_nombre)}</td>
+        <td>${(f.fecha_creacion || '').slice(0, 10)}</td>
+        <td><span class="badge badge-${f.estatus}">${f.estatus === 'pendiente' ? 'Pendiente' : 'Embarcado'}</span></td>
+        <td>${embarqueTxt}</td>
+        <td>
+          <a class="btn btn-sm btn-secondary" href="/embarques/${f.id}/etiqueta.pdf?empresa=${encodeURIComponent(empresaActual())}" target="_blank">Etiqueta</a>
+          ${f.estatus === 'pendiente' ? `<button class="btn btn-sm" onclick="abrirEmbarcar(${f.id}, '${escA(folio)}')">Marcar embarcado</button>` : ''}
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    return html;
+  }
+
+  function abrirEmbarcar(id, folio) {
+    document.getElementById('modalTitulo').textContent = `Marcar embarcado — ${folio}`;
+    document.getElementById('modalBody').innerHTML = `
+      <label>Tipo de embarque</label>
+      <select id="m-tipo" onchange="toggleTipoEmbarque()">
+        <option value="propio">Reparto propio</option>
+        <option value="paqueteria">Paqueteria</option>
+      </select>
+
+      <div id="campos-propio" class="campo-embarque visible">
+        <label>Chofer</label>
+        <input type="text" id="m-chofer">
+        <label>Unidad</label>
+        <input type="text" id="m-unidad">
+      </div>
+
+      <div id="campos-paqueteria" class="campo-embarque">
+        <label>Paqueteria</label>
+        <input type="text" id="m-paqueteria">
+        <label>Guia</label>
+        <input type="text" id="m-guia">
+      </div>
+
+      <div class="modal-err" id="m-error"></div>
+
+      <div style="margin-top:16px; display:flex; gap:8px;">
+        <button class="btn" onclick="guardarEmbarque(${id})">Guardar</button>
+        <button class="btn btn-secondary" onclick="cerrarModal()">Cancelar</button>
+      </div>
+    `;
+    document.getElementById('overlay').classList.add('show');
+  }
+
+  function toggleTipoEmbarque() {
+    const tipo = document.getElementById('m-tipo').value;
+    document.getElementById('campos-propio').classList.toggle('visible', tipo === 'propio');
+    document.getElementById('campos-paqueteria').classList.toggle('visible', tipo === 'paqueteria');
+  }
+
+  async function guardarEmbarque(id) {
+    const tipo = document.getElementById('m-tipo').value;
+    const body = { tipo_embarque: tipo };
+    if (tipo === 'propio') {
+      body.chofer = document.getElementById('m-chofer').value.trim();
+      body.unidad = document.getElementById('m-unidad').value.trim();
+    } else {
+      body.paqueteria = document.getElementById('m-paqueteria').value.trim();
+      body.guia = document.getElementById('m-guia').value.trim();
+    }
+
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+
+    try {
+      const res = await fetch(`/api/embarques/${id}/embarcar?` + p, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+      if (!res.ok) {
+        const err = document.getElementById('m-error');
+        err.textContent = res.error;
+        err.style.display = 'block';
+        return;
+      }
+      cerrarModal();
+      cargar();
+    } catch (e) {
+      const err = document.getElementById('m-error');
+      err.textContent = 'Error de conexion: ' + e.message;
+      err.style.display = 'block';
+    }
+  }
+
+  function cerrarModal(e) {
+    if (!e || e.target.id === 'overlay') document.getElementById('overlay').classList.remove('show');
+  }
+</script>
+
+</body>
+</html>

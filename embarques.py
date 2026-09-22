@@ -12,7 +12,7 @@ import threading
 
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g, send_file
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
+from fpdf.enums import XPos, YPos, Align
 
 from db import query, load_empresas
 from auth import require_roles
@@ -85,6 +85,18 @@ def _sugerido_emisor(empresa_id):
     except Exception:
         pass
     return datos
+
+
+def _logo_empresa(empresa_id):
+    """Logo de la empresa, tal cual lo tiene Aspel SAE (PARAM_DATOSEMP01.LOGO_EMPRESA
+    es una imagen sin encriptar, a diferencia de NOMBRE_EMPRESA). None si no hay logo
+    o si la tabla no tiene datos."""
+    try:
+        _, rows = query("SELECT LOGO_EMPRESA FROM PARAM_DATOSEMP01", empresa_id=empresa_id)
+        blob = rows[0][0] if rows else None
+        return bytes(blob) if blob else None
+    except Exception:
+        return None
 
 
 # ── Busqueda de facturas y destinatario sugerido ────────────────────────────
@@ -322,6 +334,16 @@ def etiqueta_pdf(embarque_id):
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_margin(15)
+
+    logo = _logo_empresa(empresa)
+    if logo:
+        try:
+            info = pdf.image(logo, x=Align.C, y=10, w=32)
+            pdf.set_y(10 + info.rendered_height + 4)
+        except Exception:
+            logo = None
+    if not logo:
+        pdf.set_y(12)
 
     pdf.set_font("Helvetica", "B", 18)
     pdf.cell(0, 12, "ETIQUETA DE EMBARQUE", align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)

@@ -271,7 +271,7 @@
         <td>${embarqueTxt}</td>
         <td>
           <a class="btn btn-sm btn-secondary" href="/embarques/${f.id}/etiqueta.pdf?empresa=${encodeURIComponent(empresaActual())}" target="_blank">Etiqueta</a>
-          ${f.estatus === 'pendiente' ? `<button class="btn btn-sm" onclick="abrirEmbarcar(${f.id}, '${escA(folio)}')">Marcar embarcado</button>` : ''}
+          <button class="btn btn-sm" onclick="abrirEmbarcar(${f.id})">${f.estatus === 'pendiente' ? 'Marcar embarcado' : 'Editar embarque'}</button>
         </td>
       </tr>`;
     });
@@ -279,31 +279,50 @@
     return html;
   }
 
-  function abrirEmbarcar(id, folio) {
-    document.getElementById('modalTitulo').textContent = `Marcar embarcado — ${folio}`;
+  async function cargarCatalogo(tipo, datalistId) {
+    try {
+      const res = await fetch(`/api/catalogo/${tipo}`).then(r => r.json());
+      if (res.ok) {
+        document.getElementById(datalistId).innerHTML =
+          res.data.map(v => `<option value="${escH(v)}">`).join('');
+      }
+    } catch (e) { /* autocompletado opcional */ }
+  }
+
+  function abrirEmbarcar(id) {
+    const f = filas.find(x => x.id === id);
+    if (!f) return;
+    const folio = `${f.factura_serie || ''}${f.factura_folio || ''}`;
+    const yaEmbarcado = f.estatus === 'embarcado';
+    const tipoActual = f.tipo_embarque || 'propio';
+
+    document.getElementById('modalTitulo').textContent = `${yaEmbarcado ? 'Editar embarque' : 'Marcar embarcado'} — ${folio}`;
     document.getElementById('modalBody').innerHTML = `
       <label>Tipo de embarque</label>
       <select id="m-tipo" onchange="toggleTipoEmbarque()">
-        <option value="propio">Reparto propio</option>
-        <option value="paqueteria">Paqueteria</option>
+        <option value="propio" ${tipoActual === 'propio' ? 'selected' : ''}>Reparto propio</option>
+        <option value="paqueteria" ${tipoActual === 'paqueteria' ? 'selected' : ''}>Paqueteria</option>
       </select>
 
-      <div id="campos-propio" class="campo-embarque visible">
+      <div id="campos-propio" class="campo-embarque ${tipoActual === 'propio' ? 'visible' : ''}">
         <label>Chofer</label>
-        <input type="text" id="m-chofer">
+        <input type="text" id="m-chofer" list="lista-chofer" value="${escH(f.chofer || '')}">
+        <datalist id="lista-chofer"></datalist>
         <label>Unidad</label>
-        <input type="text" id="m-unidad">
+        <input type="text" id="m-unidad" list="lista-unidad" value="${escH(f.unidad || '')}">
+        <datalist id="lista-unidad"></datalist>
       </div>
 
-      <div id="campos-paqueteria" class="campo-embarque">
+      <div id="campos-paqueteria" class="campo-embarque ${tipoActual === 'paqueteria' ? 'visible' : ''}">
         <label>Paqueteria</label>
-        <input type="text" id="m-paqueteria">
+        <input type="text" id="m-paqueteria" list="lista-paqueteria" value="${escH(f.paqueteria || '')}">
+        <datalist id="lista-paqueteria"></datalist>
         <label>Guia</label>
-        <input type="text" id="m-guia">
+        <input type="text" id="m-guia" value="${escH(f.guia || '')}">
       </div>
 
       <label>Numero de bultos / cajas</label>
-      <input type="text" inputmode="numeric" id="m-bultos" value="1">
+      <input type="text" inputmode="numeric" id="m-bultos" value="${f.num_bultos || 1}">
       <div style="font-size:.76rem;color:#888;margin-top:4px;">
         Se imprime una etiqueta por bulto (todas con la misma lista de productos).
       </div>
@@ -316,6 +335,9 @@
       </div>
     `;
     document.getElementById('overlay').classList.add('show');
+    cargarCatalogo('chofer', 'lista-chofer');
+    cargarCatalogo('unidad', 'lista-unidad');
+    cargarCatalogo('paqueteria', 'lista-paqueteria');
   }
 
   function toggleTipoEmbarque() {

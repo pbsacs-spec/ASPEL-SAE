@@ -52,6 +52,12 @@
     #form-destinatario { display: none; }
     #form-destinatario.visible { display: block; }
     .factura-elegida { background: #eef4fb; border-radius: 8px; padding: 10px 14px; font-size: .87rem; margin-bottom: 4px; }
+
+    select { width: 100%; padding: 9px 12px; border: 1px solid #cdd1d9; border-radius: 7px; font-size: .88rem; }
+    .campo-embarque { display: none; }
+    .campo-embarque.visible { display: block; }
+    .seccion-opcional { border-top: 1px dashed #d7dce3; margin-top: 18px; padding-top: 14px; }
+    .seccion-opcional .hint { font-size: .78rem; color: #888; font-weight: 400; margin: -2px 0 8px; }
   </style>
 </head>
 <body>
@@ -134,6 +140,38 @@
         <label>Referencia / indicaciones para la paqueteria</label>
         <input type="text" id="d-referencia" placeholder="Entre calles, color de fachada, etc.">
 
+        <div class="seccion-opcional">
+          <label>Datos de embarque (opcional, se puede completar despues)</label>
+          <div class="hint">Si ya sabes quien lo va a llevar, captura los datos ahora; si no, deja esto en blanco y la etiqueta queda "pendiente".</div>
+          <select id="e-tipo" onchange="toggleTipoEmbarque()">
+            <option value="">Sin definir todavia</option>
+            <option value="propio">Reparto propio</option>
+            <option value="paqueteria">Paqueteria</option>
+          </select>
+
+          <div id="campos-propio" class="campo-embarque">
+            <label>Chofer</label>
+            <input type="text" id="e-chofer" list="lista-chofer">
+            <datalist id="lista-chofer"></datalist>
+            <label>Unidad</label>
+            <input type="text" id="e-unidad" list="lista-unidad">
+            <datalist id="lista-unidad"></datalist>
+          </div>
+
+          <div id="campos-paqueteria" class="campo-embarque">
+            <label>Paqueteria</label>
+            <input type="text" id="e-paqueteria" list="lista-paqueteria">
+            <datalist id="lista-paqueteria"></datalist>
+            <label>Guia</label>
+            <input type="text" id="e-guia">
+          </div>
+
+          <div id="campos-bultos" class="campo-embarque">
+            <label>Numero de bultos / cajas</label>
+            <input type="text" inputmode="numeric" id="e-bultos" value="1">
+          </div>
+        </div>
+
         <div id="guardar-msg"></div>
 
         <div style="margin-top:18px; display:flex; gap:8px;">
@@ -150,6 +188,26 @@
   const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
   let facturaElegida = null;
+
+  function toggleTipoEmbarque() {
+    const tipo = document.getElementById('e-tipo').value;
+    document.getElementById('campos-propio').classList.toggle('visible', tipo === 'propio');
+    document.getElementById('campos-paqueteria').classList.toggle('visible', tipo === 'paqueteria');
+    document.getElementById('campos-bultos').classList.toggle('visible', !!tipo);
+  }
+
+  async function cargarCatalogo(tipo, datalistId) {
+    try {
+      const res = await fetch(`/api/catalogo/${tipo}`).then(r => r.json());
+      if (res.ok) {
+        document.getElementById(datalistId).innerHTML =
+          res.data.map(v => `<option value="${escH(v)}">`).join('');
+      }
+    } catch (e) { /* autocompletado opcional, no bloquea el formulario */ }
+  }
+  cargarCatalogo('chofer', 'lista-chofer');
+  cargarCatalogo('unidad', 'lista-unidad');
+  cargarCatalogo('paqueteria', 'lista-paqueteria');
 
   function empresaActual() {
     const sel = document.getElementById('empresa');
@@ -270,6 +328,16 @@
       referencia: document.getElementById('d-referencia').value.trim(),
     };
 
+    const tipoEmbarque = document.getElementById('e-tipo').value;
+    const embarque = tipoEmbarque ? {
+      tipo_embarque: tipoEmbarque,
+      chofer: document.getElementById('e-chofer').value.trim(),
+      unidad: document.getElementById('e-unidad').value.trim(),
+      paqueteria: document.getElementById('e-paqueteria').value.trim(),
+      guia: document.getElementById('e-guia').value.trim(),
+      num_bultos: parseInt(document.getElementById('e-bultos').value, 10) || 1,
+    } : null;
+
     try {
       const empresa = empresaActual();
       const p = new URLSearchParams();
@@ -277,7 +345,7 @@
       const res = await fetch('/api/embarques?' + p, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ factura: facturaElegida, destinatario }),
+        body: JSON.stringify({ factura: facturaElegida, destinatario, embarque }),
       }).then(r => r.json());
 
       if (!res.ok) {

@@ -288,6 +288,46 @@ def api_listar():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _leer_datos_embarque(body, requerido):
+    """Valida tipo_embarque/chofer/unidad/paqueteria/guia/num_bultos de un body JSON.
+    Si requerido es False y no viene tipo_embarque, regresa (None, None): al crear
+    una etiqueta estos datos son opcionales (se pueden completar despues)."""
+    tipo = body.get("tipo_embarque")
+    if not tipo:
+        if requerido:
+            return None, "Tipo de embarque invalido."
+        return None, None
+    if tipo not in ("propio", "paqueteria"):
+        return None, "Tipo de embarque invalido."
+    if tipo == "propio" and not (body.get("chofer") or "").strip():
+        return None, "Indica el chofer."
+    if tipo == "paqueteria" and not (body.get("paqueteria") or "").strip():
+        return None, "Indica la paqueteria."
+    try:
+        num_bultos = int(body.get("num_bultos") or 1)
+        if not (1 <= num_bultos <= 200):
+            raise ValueError
+    except (TypeError, ValueError):
+        return None, "Numero de bultos invalido (1-200)."
+
+    return {
+        "tipo_embarque": tipo,
+        "chofer": (body.get("chofer") or "").strip(),
+        "unidad": (body.get("unidad") or "").strip(),
+        "paqueteria": (body.get("paqueteria") or "").strip(),
+        "guia": (body.get("guia") or "").strip(),
+        "num_bultos": num_bultos,
+    }, None
+
+
+@embarques_bp.route("/api/catalogo/<tipo>")
+@require_embarques
+def api_catalogo(tipo):
+    if tipo not in ("chofer", "unidad", "paqueteria"):
+        return jsonify({"ok": False, "error": "Catalogo invalido."}), 400
+    return jsonify({"ok": True, "data": embarques_db.catalogo_listar(tipo)})
+
+
 @embarques_bp.route("/api/embarques", methods=["POST"])
 @require_embarques
 def api_crear():
@@ -301,9 +341,13 @@ def api_crear():
     if not (destinatario.get("nombre") or "").strip():
         return jsonify({"ok": False, "error": "El nombre del destinatario es obligatorio."}), 400
 
+    embarque_info, error = _leer_datos_embarque(body.get("embarque") or {}, requerido=False)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+
     try:
         existentes = embarques_db.buscar_por_factura(empresa, factura["cve_doc"])
-        embarque_id = embarques_db.crear_embarque(empresa, factura, destinatario, g.username)
+        embarque_id = embarques_db.crear_embarque(empresa, factura, destinatario, g.username, embarque_info)
         return jsonify({"ok": True, "id": embarque_id, "duplicado": bool(existentes)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -314,27 +358,17 @@ def api_crear():
 def api_embarcar(embarque_id):
     empresa = _empresa_actual()
     body = request.get_json(silent=True) or {}
-    tipo = body.get("tipo_embarque")
 
-    if tipo not in ("propio", "paqueteria"):
-        return jsonify({"ok": False, "error": "Tipo de embarque invalido."}), 400
-    if tipo == "propio" and not (body.get("chofer") or "").strip():
-        return jsonify({"ok": False, "error": "Indica el chofer."}), 400
-    if tipo == "paqueteria" and not (body.get("paqueteria") or "").strip():
-        return jsonify({"ok": False, "error": "Indica la paqueteria."}), 400
-    try:
-        num_bultos = int(body.get("num_bultos") or 1)
-        if not (1 <= num_bultos <= 200):
-            raise ValueError
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Numero de bultos invalido (1-200)."}), 400
+    embarque_info, error = _leer_datos_embarque(body, requerido=True)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
 
     embarque = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
     if not embarque:
         return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
 
     try:
-        embarques_db.marcar_embarcado(embarque_id, tipo, body, g.username)
+        embarques_db.marcar_embarcado(embarque_id, embarque_info["tipo_embarque"], embarque_info, g.username)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

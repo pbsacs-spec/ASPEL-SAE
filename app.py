@@ -226,6 +226,16 @@ def _iniciar_https_en_hilo():
     threading.Thread(target=_servir, daemon=True, name="https-5443").start()
     print("HTTPS (autofirmado) tambien disponible en el puerto 5443", flush=True)
 
+    # Tambien en el puerto 443 (estandar, sin necesidad de escribirlo en la URL):
+    # WhatsApp no reconoce como hipervinculo un link con puerto no estandar
+    # (ej. :5443), asi que los links de descarga del bot (ver whatsapp.py,
+    # _url_base_publica) usan este puerto para que si se vean como link real.
+    def _servir_443():
+        run_simple("0.0.0.0", 443, app, ssl_context=(cert, key), threaded=True)
+
+    threading.Thread(target=_servir_443, daemon=True, name="https-443").start()
+    print("HTTPS (autofirmado) tambien disponible en el puerto 443", flush=True)
+
 
 if __name__ == "__main__":
     _iniciar_https_en_hilo()

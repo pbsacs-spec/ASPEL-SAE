@@ -226,4 +226,4 @@ def _iniciar_https_en_hilo():
 
 if __name__ == "__main__":
     _iniciar_https_en_hilo()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

@@ -188,6 +188,7 @@
       }
       filas = res.data;
       window._resumen = res.resumen;
+      window._nota = res.nota || '';
       render();
     } catch (e) {
       document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
@@ -201,8 +202,10 @@
       return;
     }
     const resumen = window._resumen;
+    const nota = window._nota;
 
     cont.innerHTML = `
+      ${nota ? `<div class="card"><div class="card-body" style="font-size:.85em;color:var(--muted,#666)">${escH(nota)}</div></div>` : ''}
       <div class="card">
         <div class="card-body">
           <div class="resumen">

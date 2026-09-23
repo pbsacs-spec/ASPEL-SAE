@@ -29,22 +29,27 @@ def _as_date(v):
     return v.date() if isinstance(v, datetime.datetime) else v
 
 
-def _cargos_y_pagos(empresa_id, cve_clie=None):
-    """Si cve_clie se da, filtra en SQL a un solo cliente (usado por el detalle);
-    si no, trae todos los clientes (usado por el resumen de cartera)."""
+def _cargos_y_pagos(empresa_id, cve_clie=None, meses=None):
+    """Si cve_clie se da, filtra en SQL a un solo cliente (usado por el detalle,
+    siempre historial completo). Si no, trae todos los clientes (resumen de
+    cartera); ahi se puede acotar a los ultimos `meses` para que empresas con
+    mucho historial (cientos de miles de filas en CUEN_M/CUEN_DET) no tarden
+    minutos en cargar -- CUEN_DET no tiene indice por (CVE_CLIE, NO_FACTURA),
+    asi que ese agrupado es lento sin importar si se hace en SQL o en Python."""
     filtro = " AND TRIM(CVE_CLIE) = ?" if cve_clie else ""
     params = [cve_clie] if cve_clie else []
+    filtro_fecha = f" AND FECHA_APLI >= DATEADD(-{int(meses)} MONTH TO CURRENT_DATE)" if meses else ""
 
     _, cargos = query(f"""
         SELECT CVE_CLIE, NO_FACTURA, IMPORTE, FECHA_APLI, FECHA_VENC
         FROM __CUEN_M__
-        WHERE TIPO_MOV = 'C'{filtro}
+        WHERE TIPO_MOV = 'C'{filtro}{filtro_fecha}
     """, params, empresa_id=empresa_id)
 
     _, abonos = query(f"""
         SELECT CVE_CLIE, NO_FACTURA, SUM(IMPORTE), MAX(FECHA_APLI)
         FROM __CUEN_DET__
-        WHERE TIPO_MOV = 'A'{filtro}
+        WHERE TIPO_MOV = 'A'{filtro}{filtro_fecha}
         GROUP BY CVE_CLIE, NO_FACTURA
     """, params, empresa_id=empresa_id)
     pagos = {(c, f): (float(p or 0), u) for c, f, p, u in abonos}
@@ -64,9 +69,12 @@ def _clasificar(dias_vencido_max, pct_a_tiempo, tiene_historial):
     return "saludable"
 
 
+_MESES_RESUMEN = 24  # ver nota en _cargos_y_pagos sobre por que se acota el resumen
+
+
 def _analizar_clientes(empresa_id, hoy=None):
     hoy = hoy or datetime.date.today()
-    cargos, pagos = _cargos_y_pagos(empresa_id)
+    cargos, pagos = _cargos_y_pagos(empresa_id, meses=_MESES_RESUMEN)
 
     por_cliente = defaultdict(lambda: {
         "importe_total": 0.0, "num_facturas": 0,
@@ -163,7 +171,12 @@ def resumen():
             "num_saludables": sum(1 for d in data if d["clasificacion"] == "saludable"),
         }
 
-        return jsonify({"ok": True, "data": data, "resumen": resumen})
+        nota = (
+            f"La clasificacion (moroso/atrasado/etc.) y el detalle de vencidas solo "
+            f"consideran facturas de los ultimos {_MESES_RESUMEN} meses. El saldo total "
+            f"de cada cliente es el saldo real de Aspel, sin importar la antiguedad."
+        )
+        return jsonify({"ok": True, "data": data, "resumen": resumen, "nota": nota})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

@@ -257,6 +257,11 @@
                 <input name="numeros_con_costo" value="{{ cfg.numeros_con_costo }}" placeholder="Ej: 5215512345678,5215587654321">
                 <small>Los comandos <code class="il">info</code>/<code class="il">pdf</code>/<code class="il">excel</code> solo muestran "Ult. Costo" a estos numeros. Vacio = nadie ve costo por WhatsApp.</small>
               </div>
+              <div class="fg span2">
+                <label>URL publica del servidor (para links de descarga)</label>
+                <input name="url_base" value="{{ cfg.url_base }}" placeholder="https://173.16.16.6:5443">
+                <small>Solo aplica al bot QR: cuando pides <code class="il">pdf</code>/<code class="il">excel</code>, se manda un link de descarga en vez del archivo adjunto (whatsapp-web.js no puede enviar archivos a algunos contactos). Debe ser la direccion con la que un celular en tu red alcanza este servidor -- si el servidor tiene mas de una tarjeta de red, no se puede adivinar sola.</small>
+              </div>
             </div>
             <button class="btn btn-primary" type="submit">Guardar</button>
           </form>

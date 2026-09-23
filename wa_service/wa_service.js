@@ -8,7 +8,7 @@
  *   GET /qr.png      → imagen PNG del QR (solo cuando status = waiting_qr)
  */
 
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode  = require('qrcode');
 const express = require('express');
 const axios   = require('axios');
@@ -120,28 +120,15 @@ client.on('message', async (msg) => {
         );
         const data = res.data;
 
+        // Nota: pdf/excel ya no se mandan como adjunto -- whatsapp-web.js no
+        // puede enviar MEDIA a contactos "@lid" (identificador nuevo de
+        // WhatsApp; error interno "must include an id property", el texto no
+        // se ve afectado). El backend Flask ahora manda un link de descarga
+        // como texto normal en vez de un archivo adjunto.
         if (data.respuesta) {
             await client.sendMessage(msg.from, data.respuesta);
             console.log(`[WA] Texto enviado a ${msg.from} (${data.respuesta.length} chars)`);
-        }
-
-        if (data.archivo) {
-            const media = new MessageMedia(
-                data.archivo.mimetype,
-                data.archivo.base64,
-                data.archivo.filename
-            );
-            // client.sendMessage(msg.from, media) falla con contactos de tipo
-            // "@lid" (identificador nuevo de WhatsApp) al enviar MEDIA -- error
-            // interno de whatsapp-web.js ("must include an id property"). Los
-            // mensajes de texto si funcionan por ese camino. msg.reply() usa el
-            // chat ya resuelto del mensaje entrante en vez de buscarlo de nuevo
-            // por el string del id, y evita ese problema.
-            await msg.reply(media);
-            console.log(`[WA] Archivo enviado a ${msg.from}: ${data.archivo.filename}`);
-        }
-
-        if (!data.respuesta && !data.archivo) {
+        } else {
             await client.sendMessage(msg.from, 'Sin respuesta.');
         }
     } catch (err) {

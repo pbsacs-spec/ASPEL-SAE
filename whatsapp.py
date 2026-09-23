@@ -21,8 +21,12 @@ import hashlib
 import hmac
 import io
 import os
+import secrets
+import socket
+import threading
+import time
 import requests
-from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, abort
+from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, abort, Response
 
 from db import existencias_producto, buscar_productos, load_empresas
 from auth import require_admin
@@ -43,10 +47,11 @@ def _load():
         "phone_number_id":  cfg.get("whatsapp", "phone_number_id",  fallback=""),
         "app_secret":       cfg.get("whatsapp", "app_secret",       fallback=""),
         "numeros_con_costo": cfg.get("whatsapp", "numeros_con_costo", fallback=""),
+        "url_base":         cfg.get("whatsapp", "url_base",         fallback=""),
     }
 
 
-def _save(verify_token, access_token, phone_number_id, app_secret="", numeros_con_costo=""):
+def _save(verify_token, access_token, phone_number_id, app_secret="", numeros_con_costo="", url_base=""):
     cfg = configparser.ConfigParser()
     cfg["whatsapp"] = {
         "verify_token":      verify_token,
@@ -54,6 +59,7 @@ def _save(verify_token, access_token, phone_number_id, app_secret="", numeros_co
         "phone_number_id":   phone_number_id,
         "app_secret":        app_secret,
         "numeros_con_costo": numeros_con_costo,
+        "url_base":          url_base,
     }
     with open(CFG_FILE, "w", encoding="utf-8") as f:
         cfg.write(f)
@@ -360,6 +366,74 @@ def _cmd_archivo(fmt, arg, empresa_id=None, remitente=None):
             "empresa_id": empresa_id, "con_costo": con_costo}
 
 
+# ── Descarga por link (workaround: whatsapp-web.js no puede mandar MEDIA
+#    a contactos "@lid" -- ver commit c8d9230 -- asi que en modo QR se manda
+#    un link de descarga en vez del archivo adjunto) ─────────────────────
+
+_ARCHIVOS_TEMP = {}
+_ARCHIVOS_LOCK = threading.Lock()
+_ARCHIVO_TTL = 3600  # 1 hora
+
+
+def _guardar_archivo_temp(contenido, mimetype, filename):
+    ahora = time.time()
+    token = secrets.token_urlsafe(24)
+    with _ARCHIVOS_LOCK:
+        vencidos = [t for t, v in _ARCHIVOS_TEMP.items() if v["expira"] < ahora]
+        for t in vencidos:
+            del _ARCHIVOS_TEMP[t]
+        _ARCHIVOS_TEMP[token] = {
+            "contenido": contenido, "mimetype": mimetype,
+            "filename": filename, "expira": ahora + _ARCHIVO_TTL,
+        }
+    return token
+
+
+def _ip_lan():
+    """IP de este servidor en la LAN, para armar un link que un celular pueda
+    abrir (request.host no sirve aqui: el servicio Node llama a este endpoint
+    por localhost, no hay una request real del celular que inspeccionar)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        return "127.0.0.1"
+
+
+_HTTPS_CERT = os.path.join(os.path.dirname(__file__), "https_cert", "cert.pem")
+
+
+def _url_base_publica():
+    """Host:puerto donde un celular puede alcanzar este servidor. Se prefiere
+    el valor configurado en /admin/whatsapp (url_base) -- el servidor puede
+    tener varias tarjetas de red (ej. una hacia la LAN de oficina y otra
+    hacia la base de datos) y no hay forma confiable de adivinar cual es la
+    que los celulares usan, asi que el respaldo automatico es best-effort."""
+    url_base = _load().get("url_base", "").strip()
+    if url_base:
+        return url_base.rstrip("/")
+    if os.path.exists(_HTTPS_CERT):
+        return f"https://{_ip_lan()}:5443"
+    return f"http://{_ip_lan()}:5000"
+
+
+@wa_bp.route("/wa/archivo/<token>")
+def wa_archivo(token):
+    with _ARCHIVOS_LOCK:
+        entry = _ARCHIVOS_TEMP.get(token)
+    if not entry or entry["expira"] < time.time():
+        abort(404)
+    return Response(
+        entry["contenido"],
+        mimetype=entry["mimetype"],
+        headers={"Content-Disposition": f'attachment; filename="{entry["filename"]}"'},
+    )
+
+
 # ── Generacion de archivos ────────────────────────────────────────
 
 def _st(s, max_len=None):
@@ -607,6 +681,7 @@ def config_guardar():
         phone_number_id   = request.form.get("phone_number_id",   "").strip(),
         app_secret        = request.form.get("app_secret",        "").strip(),
         numeros_con_costo = request.form.get("numeros_con_costo", "").strip(),
+        url_base          = request.form.get("url_base",          "").strip().rstrip("/"),
     )
     flash("Configuracion guardada.", "ok")
     return redirect(url_for("whatsapp.config_pagina"))
@@ -674,7 +749,14 @@ def api_procesar():
             if fmt == "pdf"
             else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        return jsonify({"archivo": {"base64": b64, "mimetype": mimetype, "filename": filename}})
+        token = _guardar_archivo_temp(base64.b64decode(b64), mimetype, filename)
+        url = f"{_url_base_publica()}/wa/archivo/{token}"
+        encabezado = f'Resultados para "{arg}"' if tipo == "buscar" else f"*{arg}*"
+        texto_resp = (
+            f"{encabezado}\n\nDescarga tu {fmt.upper()} aqui:\n{url}\n\n"
+            f"_El link expira en 1 hora._"
+        )
+        return jsonify({"respuesta": texto_resp})
 
     return jsonify({"respuesta": resultado})
 

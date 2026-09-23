@@ -131,7 +131,13 @@ client.on('message', async (msg) => {
                 data.archivo.base64,
                 data.archivo.filename
             );
-            await client.sendMessage(msg.from, media);
+            // client.sendMessage(msg.from, media) falla con contactos de tipo
+            // "@lid" (identificador nuevo de WhatsApp) al enviar MEDIA -- error
+            // interno de whatsapp-web.js ("must include an id property"). Los
+            // mensajes de texto si funcionan por ese camino. msg.reply() usa el
+            // chat ya resuelto del mensaje entrante en vez de buscarlo de nuevo
+            // por el string del id, y evita ese problema.
+            await msg.reply(media);
             console.log(`[WA] Archivo enviado a ${msg.from}: ${data.archivo.filename}`);
         }
 

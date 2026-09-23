@@ -154,7 +154,7 @@ def facturas_buscar():
             WHERE f.STATUS = 'E'
               AND (CAST(f.FOLIO AS VARCHAR(20)) CONTAINING ? OR UPPER(c.NOMBRE) CONTAINING UPPER(?))
             ORDER BY f.FECHA_DOC DESC
-        """, [q, q], empresa_id=empresa)
+        """, [q[:20], q], empresa_id=empresa)
 
         data = [{
             "cve_doc": cve_doc, "serie": (serie or "").strip(), "folio": folio,

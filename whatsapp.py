@@ -171,7 +171,7 @@ def _procesar(texto, empresa_id=None, remitente=None):
     if cmd in ("entregado", "entrega", "entregue"):
         return _cmd_entregado(arg, empresa_id, remitente)
 
-    return _cmd_exist(texto.upper(), empresa_id)
+    return _cmd_exist_o_buscar(texto, empresa_id)
 
 
 def _cmd_empresas():
@@ -227,18 +227,39 @@ def _empresa_tag(empresa_id):
     return f" _({nombre})_"
 
 
-def _cmd_exist(clave, empresa_id=None):
-    if not clave:
-        return "Indica la clave del producto.\n_Ejemplo: exist 12AC_"
-    prod = existencias_producto(clave, empresa_id)
-    if not prod:
-        return f"No se encontro *{clave}*.\nEscribe *buscar TEXTO* para buscarlo."
+def _formatear_exist(prod, empresa_id=None):
     tag    = _empresa_tag(empresa_id)
     lineas = [f"*{prod['CVE_ART']}*{tag}\n{prod['DESCR'] or ''}", "", "Existencias:"]
     for a in prod.get("almacenes", []):
         lineas.append(f"  {a['descr']}: {a['existencia']:,.2f}")
     lineas.append(f"  *Total: {float(prod.get('EXIST_TOTAL') or 0):,.2f}*")
     return "\n".join(lineas)
+
+
+def _cmd_exist(clave, empresa_id=None):
+    if not clave:
+        return "Indica la clave del producto.\n_Ejemplo: exist 12AC_"
+    prod = existencias_producto(clave, empresa_id)
+    if not prod:
+        return f"No se encontro *{clave}*.\nEscribe *buscar TEXTO* para buscarlo."
+    return _formatear_exist(prod, empresa_id)
+
+
+def _cmd_exist_o_buscar(texto, empresa_id=None):
+    """Fallback para texto libre (sin comando reconocido): primero intenta
+    clave exacta y, si no hay match, lo trata como busqueda de texto -- asi
+    escribir el nombre de un producto tal cual (sin usar 'buscar') tambien
+    funciona, en vez de responder "no encontrado" solo porque no coincide
+    con ninguna clave."""
+    if not texto:
+        return "Escribe una clave, texto a buscar, o *ayuda* para ver los comandos."
+    prod = existencias_producto(texto.upper(), empresa_id)
+    if prod:
+        return _formatear_exist(prod, empresa_id)
+    prods = buscar_productos(texto, limite=8, empresa_id=empresa_id)
+    if prods:
+        return _formatear_buscar(texto, prods, empresa_id)
+    return f"No se encontro *{texto}*.\nEscribe *ayuda* para ver los comandos disponibles."
 
 
 def _cmd_info(clave, empresa_id=None, remitente=None):
@@ -302,12 +323,7 @@ def _cmd_entregado(arg, empresa_id=None, remitente=None):
     )
 
 
-def _cmd_buscar(texto, empresa_id=None):
-    if not texto:
-        return "Indica el texto a buscar.\n_Ejemplo: buscar cartucho_"
-    prods = buscar_productos(texto, limite=8, empresa_id=empresa_id)
-    if not prods:
-        return f"Sin resultados para \"{texto}\"."
+def _formatear_buscar(texto, prods, empresa_id=None):
     tag    = _empresa_tag(empresa_id)
     lineas = [f"Resultados para \"{texto}\"{tag}:"]
     for p in prods:
@@ -316,6 +332,15 @@ def _cmd_buscar(texto, empresa_id=None):
         lineas.append(f"• *{p['CVE_ART']}* — {desc}  ({ex:,.2f})")
     lineas.append("\n_Escribe *info CLAVE* para ver detalle_")
     return "\n".join(lineas)
+
+
+def _cmd_buscar(texto, empresa_id=None):
+    if not texto:
+        return "Indica el texto a buscar.\n_Ejemplo: buscar cartucho_"
+    prods = buscar_productos(texto, limite=8, empresa_id=empresa_id)
+    if not prods:
+        return f"Sin resultados para \"{texto}\"."
+    return _formatear_buscar(texto, prods, empresa_id)
 
 
 def _cmd_archivo(fmt, arg, empresa_id=None, remitente=None):

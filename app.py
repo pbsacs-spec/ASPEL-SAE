@@ -103,7 +103,10 @@ def _consultar_productos(incluir_costo):
         where_parts.append(
             "(UPPER(i.CVE_ART) CONTAINING UPPER(?) OR UPPER(i.DESCR) CONTAINING UPPER(?))"
         )
-        params += [buscar, buscar]
+        # CVE_ART es CHAR(16) en Aspel: pasar un texto mas largo ahi revienta
+        # el driver ("Value of parameter is too long"), aunque la comparacion
+        # sea CONTAINING y nunca pudiera coincidir de todos modos.
+        params += [buscar[:16], buscar]
     if linea:
         where_parts.append("i.LIN_PROD = ?")
         params.append(linea)

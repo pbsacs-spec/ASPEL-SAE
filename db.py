@@ -285,11 +285,15 @@ def existencias_producto(clave, empresa_id=None):
 
 
 def buscar_productos(texto, limite=8, empresa_id=None):
+    # CVE_ART es CHAR(16) en Aspel: si texto es mas largo, fdb rechaza el
+    # parametro ("Value of parameter is too long") aunque la comparacion sea
+    # CONTAINING. Se trunca solo la copia usada contra CVE_ART -- un texto de
+    # mas de 16 caracteres nunca podria coincidir ahi de todos modos.
     cols, rows = query(f"""
         SELECT FIRST {int(limite)} i.CVE_ART, i.DESCR, i.EXIST
         FROM __INVE__ i
         WHERE UPPER(i.CVE_ART) CONTAINING UPPER(?)
            OR UPPER(i.DESCR) CONTAINING UPPER(?)
         ORDER BY i.CVE_ART
-    """, [texto, texto], empresa_id=empresa_id)
+    """, [texto[:16], texto], empresa_id=empresa_id)
     return [dict(zip(cols, r)) for r in rows]

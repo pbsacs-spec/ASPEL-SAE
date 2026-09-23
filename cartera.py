@@ -37,13 +37,13 @@ def _cargos_y_pagos(empresa_id, cve_clie=None):
 
     _, cargos = query(f"""
         SELECT CVE_CLIE, NO_FACTURA, IMPORTE, FECHA_APLI, FECHA_VENC
-        FROM CUEN_M01
+        FROM __CUEN_M__
         WHERE TIPO_MOV = 'C'{filtro}
     """, params, empresa_id=empresa_id)
 
     _, abonos = query(f"""
         SELECT CVE_CLIE, NO_FACTURA, SUM(IMPORTE), MAX(FECHA_APLI)
-        FROM CUEN_DET01
+        FROM __CUEN_DET__
         WHERE TIPO_MOV = 'A'{filtro}
         GROUP BY CVE_CLIE, NO_FACTURA
     """, params, empresa_id=empresa_id)
@@ -117,7 +117,7 @@ def resumen():
 
         _, clientes = query("""
             SELECT CLAVE, NOMBRE, SALDO, DIASCRED, LIMCRED, CON_CREDITO, FCH_ULTCOM
-            FROM CLIE01
+            FROM __CLIE__
             WHERE STATUS = 'A'
         """, empresa_id=empresa)
 

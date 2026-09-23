@@ -52,7 +52,7 @@ def anios():
     try:
         _, rows = query("""
             SELECT DISTINCT EXTRACT(YEAR FROM FECHA_DOC)
-            FROM FACTF01
+            FROM __FACTF__
             WHERE STATUS = 'E'
             ORDER BY 1 DESC
         """, empresa_id=empresa)
@@ -91,9 +91,9 @@ def datos():
                 SUM(p.CANT) AS CANTIDAD,
                 SUM(p.TOT_PARTIDA) AS IMPORTE,
                 COUNT(DISTINCT p.CVE_DOC) AS NUM_VENTAS
-            FROM PAR_FACTF01 p
-            JOIN FACTF01 f ON f.CVE_DOC = p.CVE_DOC
-            LEFT JOIN INVE01 i ON i.CVE_ART = p.CVE_ART
+            FROM __PAR_FACTF__ p
+            JOIN __FACTF__ f ON f.CVE_DOC = p.CVE_DOC
+            LEFT JOIN __INVE__ i ON i.CVE_ART = p.CVE_ART
             WHERE {where_sql}
             GROUP BY p.CVE_ART, COALESCE(i.DESCR, p.DESCR_ART), i.LIN_PROD, p.TIPO_PROD
             ORDER BY IMPORTE DESC
@@ -124,8 +124,8 @@ def datos():
                 mes_params.append(tipo)
             _, mes_rows = query(f"""
                 SELECT EXTRACT(MONTH FROM f.FECHA_DOC) AS MES, SUM(p.TOT_PARTIDA)
-                FROM PAR_FACTF01 p
-                JOIN FACTF01 f ON f.CVE_DOC = p.CVE_DOC
+                FROM __PAR_FACTF__ p
+                JOIN __FACTF__ f ON f.CVE_DOC = p.CVE_DOC
                 WHERE {" AND ".join(mes_where)}
                 GROUP BY EXTRACT(MONTH FROM f.FECHA_DOC)
                 ORDER BY 1
@@ -170,10 +170,10 @@ def mapa():
                 SUM(p.TOT_PARTIDA) AS IMPORTE,
                 COUNT(DISTINCT f.CVE_DOC) AS NUM_VENTAS,
                 COUNT(DISTINCT c.CLAVE) AS NUM_CLIENTES
-            FROM PAR_FACTF01 p
-            JOIN FACTF01 f ON f.CVE_DOC = p.CVE_DOC
-            JOIN CLIE01 c ON c.CLAVE = f.CVE_CLPV
-            LEFT JOIN INVE01 i ON i.CVE_ART = p.CVE_ART
+            FROM __PAR_FACTF__ p
+            JOIN __FACTF__ f ON f.CVE_DOC = p.CVE_DOC
+            JOIN __CLIE__ c ON c.CLAVE = f.CVE_CLPV
+            LEFT JOIN __INVE__ i ON i.CVE_ART = p.CVE_ART
             WHERE {where_sql}
             GROUP BY c.ESTADO, c.MUNICIPIO, p.CVE_ART, COALESCE(i.DESCR, p.DESCR_ART), p.TIPO_PROD
         """, params, empresa_id=empresa)

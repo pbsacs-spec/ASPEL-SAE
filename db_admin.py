@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g
-from db import load_empresas, save_empresas, config_lock
+from db import load_empresas, save_empresas, config_lock, _detectar_sufijo
 from auth import require_admin, list_users, set_user, delete_user, ROLES
 
 db_admin_bp = Blueprint("db_admin", __name__)
@@ -160,10 +160,11 @@ def _probar_conexion(db_path):
             password="masterkey",
             charset="WIN1252",
         )
+        sufijo = _detectar_sufijo(con)
         cur = con.cursor()
-        cur.execute("SELECT COUNT(*) FROM INVE01")
+        cur.execute(f"SELECT COUNT(*) FROM INVE{sufijo}")
         total = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM ALMACENES01 WHERE STATUS = 'A'")
+        cur.execute(f"SELECT COUNT(*) FROM ALMACENES{sufijo} WHERE STATUS = 'A'")
         alm = cur.fetchone()[0]
         cur.close()
         con.close()

@@ -3,7 +3,7 @@ import secrets
 
 from flask import Flask, render_template, request, jsonify, g
 
-from db import query, get_almacenes, load_empresas
+from db import query, get_almacenes, existencias_por_almacen, load_empresas
 from whatsapp import wa_bp
 from db_admin import db_admin_bp
 from ventas import ventas_bp
@@ -116,10 +116,10 @@ def _consultar_productos(incluir_costo):
     if alm_filtro is not None:
         where_parts.append(f"""
             COALESCE((
-                SELECT m.EXISTENCIA FROM MINVE01 m
+                SELECT m.EXISTENCIA FROM __MINVE__ m
                 WHERE m.CVE_ART = i.CVE_ART AND m.ALMACEN = {alm_filtro}
                   AND m.NUM_MOV = (
-                      SELECT MAX(m2.NUM_MOV) FROM MINVE01 m2
+                      SELECT MAX(m2.NUM_MOV) FROM __MINVE__ m2
                       WHERE m2.CVE_ART = m.CVE_ART AND m2.ALMACEN = m.ALMACEN
                   )
             ), 0) > 0
@@ -143,8 +143,8 @@ def _consultar_productos(incluir_costo):
             MAX(CASE WHEN p.CVE_PRECIO = 2 THEN p.PRECIO END) AS PREC2,
             MAX(CASE WHEN p.CVE_PRECIO = 3 THEN p.PRECIO END) AS PREC3,
             i.STATUS
-        FROM INVE01 i
-        LEFT JOIN PRECIO_X_PROD01 p ON p.CVE_ART = i.CVE_ART
+        FROM __INVE__ i
+        LEFT JOIN __PRECIO_X_PROD__ p ON p.CVE_ART = i.CVE_ART
         WHERE {where}
         GROUP BY
             i.CVE_ART, i.DESCR, i.LIN_PROD, i.UNI_MED,
@@ -159,20 +159,7 @@ def _consultar_productos(incluir_costo):
 
         if data:
             claves = [r["CVE_ART"] for r in data]
-            ph = ",".join(["?"] * len(claves))
-            _, exist_rows = query(f"""
-                SELECT m.CVE_ART, m.ALMACEN, m.EXISTENCIA
-                FROM MINVE01 m
-                WHERE m.CVE_ART IN ({ph})
-                  AND m.NUM_MOV = (
-                      SELECT MAX(m2.NUM_MOV) FROM MINVE01 m2
-                      WHERE m2.CVE_ART = m.CVE_ART AND m2.ALMACEN = m.ALMACEN
-                  )
-            """, claves, empresa_id=empresa)
-
-            exist_map = {}
-            for cve_art, cve_alm, existencia in exist_rows:
-                exist_map.setdefault(cve_art, {})[cve_alm] = float(existencia or 0)
+            exist_map = existencias_por_almacen(claves, almacenes, empresa_id=empresa)
 
             for row in data:
                 cve = row["CVE_ART"]
@@ -198,7 +185,7 @@ def lineas():
     empresa = request.args.get("empresa", "").strip() or None
     try:
         _, rows = query("""
-            SELECT DISTINCT LIN_PROD FROM INVE01
+            SELECT DISTINCT LIN_PROD FROM __INVE__
             WHERE LIN_PROD IS NOT NULL AND LIN_PROD <> ''
             ORDER BY LIN_PROD
         """, empresa_id=empresa)

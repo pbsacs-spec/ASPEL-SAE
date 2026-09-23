@@ -68,7 +68,7 @@ def _sugerido_emisor(empresa_id):
     configura el Emisor. El nombre comercial no se puede leer (Aspel lo encripta)."""
     datos = {c: "" for c in _CAMPOS_EMISOR}
     try:
-        _, rows = query("SELECT RFC FROM PARAM_DATOSEMP01", empresa_id=empresa_id)
+        _, rows = query("SELECT RFC FROM __PARAM_DATOSEMP__", empresa_id=empresa_id)
         if rows:
             datos["rfc"] = (rows[0][0] or "").strip()
     except Exception:
@@ -76,7 +76,7 @@ def _sugerido_emisor(empresa_id):
     try:
         _, rows = query("""
             SELECT CALLE, NUMERO_EXT, NUMERO_INT, COLONIA, MUNICIPIO, ESTADO, PAIS, CP
-            FROM PARAM_DOMFISCAL01
+            FROM __PARAM_DOMFISCAL__
         """, empresa_id=empresa_id)
         if rows:
             calle, numext, numint, colonia, municipio, estado, pais, cp = rows[0]
@@ -96,7 +96,7 @@ def _logo_empresa(empresa_id):
     es una imagen sin encriptar, a diferencia de NOMBRE_EMPRESA). None si no hay logo
     o si la tabla no tiene datos."""
     try:
-        _, rows = query("SELECT LOGO_EMPRESA FROM PARAM_DATOSEMP01", empresa_id=empresa_id)
+        _, rows = query("SELECT LOGO_EMPRESA FROM __PARAM_DATOSEMP__", empresa_id=empresa_id)
         blob = rows[0][0] if rows else None
         return bytes(blob) if blob else None
     except Exception:
@@ -149,8 +149,8 @@ def facturas_buscar():
     try:
         _, rows = query("""
             SELECT FIRST 20 f.CVE_DOC, f.SERIE, f.FOLIO, f.FECHA_DOC, c.CLAVE, c.NOMBRE
-            FROM FACTF01 f
-            JOIN CLIE01 c ON c.CLAVE = f.CVE_CLPV
+            FROM __FACTF__ f
+            JOIN __CLIE__ c ON c.CLAVE = f.CVE_CLPV
             WHERE f.STATUS = 'E'
               AND (CAST(f.FOLIO AS VARCHAR(20)) CONTAINING ? OR UPPER(c.NOMBRE) CONTAINING UPPER(?))
             ORDER BY f.FECHA_DOC DESC
@@ -187,8 +187,8 @@ def facturas_pendientes():
     try:
         _, rows = query("""
             SELECT FIRST 200 f.CVE_DOC, f.SERIE, f.FOLIO, f.FECHA_DOC, c.CLAVE, c.NOMBRE
-            FROM FACTF01 f
-            JOIN CLIE01 c ON c.CLAVE = f.CVE_CLPV
+            FROM __FACTF__ f
+            JOIN __CLIE__ c ON c.CLAVE = f.CVE_CLPV
             WHERE f.STATUS = 'E'
               AND f.FECHA_DOC >= ? AND f.FECHA_DOC < ?
             ORDER BY f.FECHA_DOC DESC
@@ -216,8 +216,8 @@ def factura_sugerido(cve_doc):
                    c.CALLE_ENVIO, c.NUMEXT_ENVIO, c.NUMINT_ENVIO, c.COLONIA_ENVIO, c.CODIGO_ENVIO,
                    c.MUNICIPIO_ENVIO, c.ESTADO_ENVIO, c.PAIS_ENVIO,
                    c.REFERDIR, c.REFERENCIA_ENVIO
-            FROM FACTF01 f
-            JOIN CLIE01 c ON c.CLAVE = f.CVE_CLPV
+            FROM __FACTF__ f
+            JOIN __CLIE__ c ON c.CLAVE = f.CVE_CLPV
             WHERE f.CVE_DOC = ? AND f.STATUS = 'E'
         """, [cve_doc], empresa_id=empresa)
         if not rows:
@@ -622,8 +622,8 @@ _CANT_W = 18   # mm, ancho de la columna Cantidad
 def _partidas_factura(empresa_id, cve_doc):
     _, rows = query("""
         SELECT p.CANT, COALESCE(i.DESCR, p.DESCR_ART) AS DESCR
-        FROM PAR_FACTF01 p
-        LEFT JOIN INVE01 i ON i.CVE_ART = p.CVE_ART
+        FROM __PAR_FACTF__ p
+        LEFT JOIN __INVE__ i ON i.CVE_ART = p.CVE_ART
         WHERE p.CVE_DOC = ?
         ORDER BY p.NUM_PAR
     """, [cve_doc], empresa_id=empresa_id)

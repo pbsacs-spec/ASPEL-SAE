@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Telegram - Aspel SAE</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #222; }
+
+    header {
+      background: #1a3a5c; color: #fff;
+      padding: 12px 24px; display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.05rem; font-weight: 600; }
+    header a { color: #9bbfe0; font-size: .82rem; text-decoration: none; }
+    header a:hover { color: #fff; }
+
+    .page { max-width: 780px; margin: 24px auto; padding: 0 16px; display: grid; gap: 18px; }
+
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 6px rgba(0,0,0,.09); overflow: hidden; }
+    .card-hdr {
+      background: #f7f9fc; border-bottom: 1px solid #e0e4ea;
+      padding: 11px 18px; font-weight: 600; font-size: .9rem; color: #1a3a5c;
+    }
+    .card-body { padding: 18px; }
+
+    .badge-prueba {
+      display: inline-block; background: #fef9e7; color: #9a6700;
+      font-size: .72rem; font-weight: 700; padding: 2px 9px; border-radius: 20px;
+      text-transform: uppercase; letter-spacing: .04em; margin-left: 8px; vertical-align: middle;
+    }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px; font-size: .82rem; font-weight: 600;
+    }
+    .status-on  { background: #eafaf1; color: #1e8449; }
+    .status-off { background: #fdecea; color: #922b21; }
+    .status-none { background: #f0f2f5; color: #888; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .status-on .dot { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .info-list { list-style: none; display: grid; gap: 8px; font-size: .86rem; color: #444; margin: 10px 0; }
+    .info-list li { display: flex; gap: 8px; align-items: flex-start; line-height: 1.45; }
+    .info-list li::before { content: '→'; color: #1a3a5c; flex-shrink: 0; font-weight: 700; }
+
+    .fg { display: flex; flex-direction: column; gap: 4px; }
+    .fg label { font-size: .75rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+    .fg input { padding: 7px 11px; border: 1px solid #ccc; border-radius: 6px; font-size: .86rem; font-family: monospace; }
+    .fg input:focus { outline: none; border-color: #1a3a5c; }
+    .fg small { font-size: .73rem; color: #888; line-height: 1.4; }
+
+    .btn { padding: 7px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: .86rem; font-weight: 500; }
+    .btn-primary { background: #1a3a5c; color: #fff; }
+    .btn-primary:hover { background: #245080; }
+
+    .flash-ok  { background: #eafaf1; border-left: 4px solid #27ae60; padding: 10px 14px; border-radius: 4px; font-size: .86rem; color: #1e8449; white-space: pre-wrap; }
+
+    .cmd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap: 10px; }
+    .cmd-card { border: 1px solid #e0e4ea; border-radius: 8px; padding: 11px 13px; font-size: .83rem; }
+    .cmd-card code { display: block; font-weight: 700; color: #1a3a5c; margin-bottom: 3px; font-family: monospace; font-size: .88rem; }
+    .cmd-card p { color: #555; line-height: 1.4; }
+
+    code.il { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: .83em; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Telegram Bot — Aspel SAE <span class="badge-prueba">Prueba</span></h1>
+  <div style="display:flex;gap:16px;align-items:center;">
+    <a href="/admin/whatsapp" style="color:#9bbfe0;">WhatsApp</a>
+    <a href="/">← Volver a Existencias</a>
+  </div>
+</header>
+
+<div class="page">
+
+  {% with msgs = get_flashed_messages(with_categories=True) %}
+    {% for cat, msg in msgs %}
+      <div class="flash-{{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="card">
+    <div class="card-hdr">Estado</div>
+    <div class="card-body">
+      <span id="estado-badge" class="status-badge status-none"><span class="dot"></span> Consultando...</span>
+      <p id="estado-detalle" style="margin-top:10px;font-size:.83rem;color:#666;"></p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">1. Crear el bot en Telegram</div>
+    <div class="card-body">
+      <ul class="info-list">
+        <li>En Telegram, busca el contacto <code class="il">@BotFather</code> y abrele un chat.</li>
+        <li>Mandale <code class="il">/newbot</code> y sigue las instrucciones (nombre y usuario del bot).</li>
+        <li>Te va a dar un <strong>token</strong> (algo como <code class="il">123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>). Copialo y pegalo abajo.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">2. Configurar el token</div>
+    <div class="card-body">
+      <form method="POST" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <div class="fg" style="flex:1;min-width:280px;">
+          <label>Bot Token</label>
+          <input name="bot_token" value="{{ cfg.bot_token }}" placeholder="123456789:AAExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+          <small>Se guarda solo en este servidor (telegram_config.ini), nunca en GitHub.</small>
+        </div>
+        <button class="btn btn-primary" type="submit">Guardar</button>
+      </form>
+      {% if configurado %}
+      <p style="margin-top:12px;font-size:.8rem;color:#888;">Si cambiaste el token, reinicia el servicio (tarea programada <code class="il">AspelInventario-Flask</code>) para que tome efecto.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">3. Probarlo</div>
+    <div class="card-body">
+      <ul class="info-list">
+        <li>Busca en Telegram al usuario de tu bot (el que elegiste con @BotFather) y abrele un chat.</li>
+        <li>Manda <code class="il">/start</code> o cualquier comando (ej. <code class="il">ayuda</code>) -- un bot no puede escribirte primero, tienes que iniciar tu la conversacion.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hdr">Comandos disponibles (los mismos que WhatsApp)</div>
+    <div class="card-body">
+      <div class="cmd-grid">
+        <div class="cmd-card"><code>exist CLAVE</code><p>Existencias por almacen.</p></div>
+        <div class="cmd-card"><code>info CLAVE</code><p>Exist. + precios + ult. costo.</p></div>
+        <div class="cmd-card"><code>buscar TEXTO</code><p>Busca por descripcion.</p></div>
+        <div class="cmd-card"><code>pdf CLAVE</code><p>Ficha del producto en PDF (adjunto real).</p></div>
+        <div class="cmd-card"><code>ayuda</code><p>Muestra la lista de comandos.</p></div>
+        <div class="cmd-card"><code>CLAVE</code><p>Sin comando: busca esa clave o ese texto.</p></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function actualizarEstado() {
+    fetch('/admin/telegram/status').then(r => r.json()).then(e => {
+      const badge = document.getElementById('estado-badge');
+      const detalle = document.getElementById('estado-detalle');
+      if (e.activo && !e.error) {
+        badge.className = 'status-badge status-on';
+        badge.innerHTML = '<span class="dot"></span> Conectado' + (e.bot_username ? ' como @' + e.bot_username : '');
+        detalle.textContent = '';
+      } else if (e.error) {
+        badge.className = 'status-badge status-off';
+        badge.innerHTML = '<span class="dot"></span> Error';
+        detalle.textContent = e.error;
+      } else {
+        badge.className = 'status-badge status-none';
+        badge.innerHTML = '<span class="dot"></span> Sin iniciar (falta token o reiniciar el servicio)';
+        detalle.textContent = '';
+      }
+    }).catch(() => {});
+  }
+  actualizarEstado();
+  setInterval(actualizarEstado, 5000);
+</script>
+
+</body>
+</html>

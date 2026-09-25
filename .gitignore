@@ -2,6 +2,7 @@
 auth_config.ini
 db_config.ini
 wa_config.ini
+telegram_config.ini
 embarque_config.ini
 .secret_key
 https_cert/

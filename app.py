@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, jsonify, g
 
 from db import query, get_almacenes, existencias_por_almacen, load_empresas
 from whatsapp import wa_bp
+from telegram_bot import telegram_bp, iniciar_telegram_en_hilo
 from db_admin import db_admin_bp
 from ventas import ventas_bp
 from cartera import cartera_bp
@@ -28,6 +29,7 @@ def _cargar_secret_key():
 app = Flask(__name__)
 app.secret_key = _cargar_secret_key()
 app.register_blueprint(wa_bp)
+app.register_blueprint(telegram_bp)
 app.register_blueprint(db_admin_bp)
 app.register_blueprint(ventas_bp)
 app.register_blueprint(cartera_bp)
@@ -268,4 +270,5 @@ def _iniciar_https_en_hilo():
 
 if __name__ == "__main__":
     _iniciar_https_en_hilo()
+    iniciar_telegram_en_hilo()
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

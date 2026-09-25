@@ -237,6 +237,7 @@
   let filas    = [];          // datos actuales
   let almLista = [];          // [{cve, descr}, ...]  de la BD
   let sortCol  = null, sortDir = 1;
+  let todasEmpresasActivo = false;   // ultima consulta trajo varias empresas a la vez
   let panelOpen = false;
 
   function empresaActual() {
@@ -249,6 +250,7 @@
     sel.innerHTML = '';
     if (er.ok && er.data.length > 1) {
       er.data.forEach(e => addOptionEl(sel, e.id, e.nombre));
+      addOptionEl(sel, '__todas__', 'Todas las empresas');
       sel.value = er.default || '';
       document.getElementById('empresa-wrap').style.display = '';
     } else if (er.ok && er.data.length === 1) {
@@ -258,20 +260,35 @@
   }).catch(() => cargarFiltros());
 
   function cargarFiltros() {
-    const emp = empresaActual();
-    const qs  = emp ? `?empresa=${encodeURIComponent(emp)}` : '';
+    const emp   = empresaActual();
+    const todas = emp === '__todas__';
+    const almWrap = document.getElementById('almacen').closest('.fg');
+
+    if (todas) {
+      // El filtro "con existencia en almacen" no aplica buscando en varias
+      // empresas a la vez (cada una tiene su propio catalogo de almacenes).
+      if (almWrap) almWrap.style.display = 'none';
+      document.getElementById('almacen').value = '';
+      almLista = [];
+    } else if (almWrap) {
+      almWrap.style.display = '';
+    }
+
+    const qs = (emp && !todas) ? `?empresa=${encodeURIComponent(emp)}` : '';
     Promise.all([
-      fetch('/api/lineas'   + qs).then(r => r.json()),
-      fetch('/api/almacenes' + qs).then(r => r.json()),
+      fetch('/api/lineas' + qs).then(r => r.json()),
+      todas ? Promise.resolve({ ok: true, data: [] }) : fetch('/api/almacenes' + qs).then(r => r.json()),
     ]).then(([lr, ar]) => {
       const linSel = document.getElementById('linea');
       linSel.innerHTML = '<option value="">Todas las lineas</option>';
       if (lr.ok) lr.data.forEach(l => addOption('linea', l, l));
-      const almSel = document.getElementById('almacen');
-      almSel.innerHTML = '<option value="">Cualquier almacen</option>';
-      if (ar.ok) {
-        almLista = ar.data;
-        ar.data.forEach(a => addOption('almacen', a.cve, `${a.cve} - ${a.descr}`));
+      if (!todas) {
+        const almSel = document.getElementById('almacen');
+        almSel.innerHTML = '<option value="">Cualquier almacen</option>';
+        if (ar.ok) {
+          almLista = ar.data;
+          ar.data.forEach(a => addOption('almacen', a.cve, `${a.cve} - ${a.descr}`));
+        }
       }
     });
   }
@@ -345,6 +362,7 @@
 
     filas    = res.data;
     almLista = res.almacenes || almLista;
+    todasEmpresasActivo = !!res.todas_empresas;
     sortCol  = null;
     habilitarExport(filas.length > 0);
     renderTabla(filas);
@@ -389,6 +407,7 @@
     let html = `<table><thead><tr>
       <th class="sort" onclick="ordenar('CVE_ART')">Clave</th>
       <th class="sort" onclick="ordenar('DESCR')">Descripcion</th>
+      ${todasEmpresasActivo ? '<th class="sort" onclick="ordenar(\'EMPRESA_NOMBRE\')">Empresa</th>' : ''}
       <th class="sort" onclick="ordenar('LIN_PROD')">Linea</th>
       <th>Unidad</th>
       ${almCols}
@@ -411,9 +430,10 @@
         return `<td class="alm ${cls}">${fmt(v)}</td>`;
       }).join('');
 
-      html += `<tr onclick="verAlmacenes('${escA(r.CVE_ART)}','${escA(r.DESCR)}')">
+      html += `<tr onclick="verAlmacenes('${escA(r.CVE_ART)}','${escA(r.DESCR)}','${escA(r.EMPRESA_ID||'')}')">
         <td><strong>${escH(r.CVE_ART)}</strong></td>
         <td>${escH(r.DESCR||'')}</td>
+        ${todasEmpresasActivo ? `<td>${escH(r.EMPRESA_NOMBRE||'')}</td>` : ''}
         <td>${escH(r.LIN_PROD||'')}</td>
         <td>${escH(r.UNI_MED||'')}</td>
         ${almCells}
@@ -443,20 +463,25 @@
   }
 
   // ── Modal detalle almacenes ───────────────────────────────────
-  async function verAlmacenes(clave, descr) {
+  async function verAlmacenes(clave, descr, empresaId) {
     // Construir detalle desde los datos ya cargados (sin peticion extra)
-    const prod = filas.find(r => r.CVE_ART === clave);
+    const prod = filas.find(r => r.CVE_ART === clave && (!todasEmpresasActivo || r.EMPRESA_ID === empresaId));
     document.getElementById('modal-titulo').textContent = `${clave} — ${descr}`;
 
-    let total = 0;
-    let html = `<table><thead><tr><th>Almacen</th><th class="num">Existencia</th></tr></thead><tbody>`;
-    almLista.forEach(a => {
-      const v = Number(prod ? (prod[`ALM_${a.cve}`] ?? 0) : 0);
-      total += v;
-      const cls = v < 0 ? 'ex-neg' : v === 0 ? 'ex-cero' : 'ex-ok';
-      html += `<tr><td>${escH(a.descr)}</td><td class="num ${cls}">${fmt(v)}</td></tr>`;
-    });
-    html += `</tbody><tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${fmt(total)}</strong></td></tr></tfoot></table>`;
+    let html;
+    if (todasEmpresasActivo) {
+      html = `<p class="empty">Buscando en todas las empresas no se muestra el desglose por almacen. Cambia al selector de "${escH(prod ? prod.EMPRESA_NOMBRE : '')}" para verlo.</p>`;
+    } else {
+      let total = 0;
+      html = `<table><thead><tr><th>Almacen</th><th class="num">Existencia</th></tr></thead><tbody>`;
+      almLista.forEach(a => {
+        const v = Number(prod ? (prod[`ALM_${a.cve}`] ?? 0) : 0);
+        total += v;
+        const cls = v < 0 ? 'ex-neg' : v === 0 ? 'ex-cero' : 'ex-ok';
+        html += `<tr><td>${escH(a.descr)}</td><td class="num ${cls}">${fmt(v)}</td></tr>`;
+      });
+      html += `</tbody><tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${fmt(total)}</strong></td></tr></tfoot></table>`;
+    }
 
     document.getElementById('modal-body').innerHTML = html;
     document.getElementById('overlay').classList.add('show');
@@ -471,11 +496,13 @@
   function buildExportData() {
     const almCabs = almLista.map(a => a.descr);
     const costoCab  = SIN_COSTO ? [] : ['Ult. Costo'];
-    const cabeceras = ['Clave', 'Descripcion', 'Linea', 'Unidad', ...almCabs, 'Total',
+    const empCab = todasEmpresasActivo ? ['Empresa'] : [];
+    const cabeceras = ['Clave', 'Descripcion', ...empCab, 'Linea', 'Unidad', ...almCabs, 'Total',
                        ...costoCab, 'Precio 1', 'Precio 2', 'Precio 3', 'Estatus'];
     const cuerpo = filas.map(r => [
       r.CVE_ART,
       r.DESCR || '',
+      ...(todasEmpresasActivo ? [r.EMPRESA_NOMBRE || ''] : []),
       r.LIN_PROD || '',
       r.UNI_MED || '',
       ...almLista.map(a => Number(r[`ALM_${a.cve}`] ?? 0)),

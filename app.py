@@ -74,6 +74,9 @@ def productos():
     return _consultar_productos(incluir_costo=(g.role != "vendedores"))
 
 
+_TODAS_EMPRESAS = "__todas__"
+
+
 def _consultar_productos(incluir_costo):
     buscar    = request.args.get("q", "").strip()
     linea     = request.args.get("linea", "").strip()
@@ -83,11 +86,19 @@ def _consultar_productos(incluir_costo):
     solo_con  = request.args.get("solo_con", "0")
     empresa   = request.args.get("empresa", "").strip() or None
 
-    # Validar empresa_id
-    if empresa:
-        empresas, _ = load_empresas()
-        if empresa not in empresas:
+    empresas_cfg, _ = load_empresas()
+
+    todas = empresa == _TODAS_EMPRESAS
+    if todas:
+        if almacen:
+            return jsonify({"ok": False, "error": "El filtro de almacen no aplica buscando en todas las empresas."}), 400
+        empresa = None
+        empresas_a_consultar = sorted(empresas_cfg.keys())
+    else:
+        # Validar empresa_id
+        if empresa and empresa not in empresas_cfg:
             empresa = None
+        empresas_a_consultar = [empresa]
 
     alm_filtro = None
     if almacen:
@@ -156,28 +167,46 @@ def _consultar_productos(incluir_costo):
     """
 
     try:
-        almacenes = get_almacenes(empresa_id=empresa)
-        cols, rows = query(sql, params, empresa_id=empresa)
-        data = [dict(zip(cols, r)) for r in rows]
+        almacenes = []
+        data = []
+        for eid in empresas_a_consultar:
+            cols, rows = query(sql, params, empresa_id=eid)
+            filas_emp = [dict(zip(cols, r)) for r in rows]
 
-        if data:
-            claves = [r["CVE_ART"] for r in data]
-            exist_map = existencias_por_almacen(claves, almacenes, empresa_id=empresa)
+            if todas:
+                nombre_emp = empresas_cfg.get(eid, {}).get("nombre", eid)
+                for row in filas_emp:
+                    row["EMPRESA_ID"] = eid
+                    row["EMPRESA_NOMBRE"] = nombre_emp
+            else:
+                # Solo se pide el desglose por almacen cuando se ve una sola
+                # empresa: cada empresa puede tener almacenes distintos y no
+                # tiene sentido mezclar esas columnas en modo "todas".
+                almacenes = get_almacenes(empresa_id=eid)
+                if filas_emp:
+                    claves = [r["CVE_ART"] for r in filas_emp]
+                    exist_map = existencias_por_almacen(claves, almacenes, empresa_id=eid)
+                    for row in filas_emp:
+                        cve = row["CVE_ART"]
+                        for alm in almacenes:
+                            row[f"ALM_{alm['cve']}"] = exist_map.get(cve, {}).get(alm["cve"], 0.0)
 
-            for row in data:
-                cve = row["CVE_ART"]
-                for alm in almacenes:
-                    row[f"ALM_{alm['cve']}"] = exist_map.get(cve, {}).get(alm["cve"], 0.0)
+            for row in filas_emp:
                 exist     = float(row.get("EXIST_TOTAL") or 0)
                 stock_min = float(row.get("STOCK_MIN") or 0)
                 row["BAJO_STOCK"] = stock_min > 0 and exist <= stock_min
+
+            data += filas_emp
+
+        if todas:
+            data.sort(key=lambda r: (r["CVE_ART"], r["EMPRESA_NOMBRE"]))
 
         if not incluir_costo:
             for row in data:
                 row.pop("COSTO_PROM", None)
                 row.pop("ULT_COSTO", None)
 
-        return jsonify({"ok": True, "data": data, "almacenes": almacenes})
+        return jsonify({"ok": True, "data": data, "almacenes": almacenes, "todas_empresas": todas})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

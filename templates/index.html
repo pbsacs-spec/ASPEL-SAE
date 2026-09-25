@@ -252,7 +252,7 @@
       er.data.forEach(e => addOptionEl(sel, e.id, e.nombre));
       addOptionEl(sel, '__todas__', 'Todas las empresas');
       sel.value = er.default || '';
-      document.getElementById('empresa-wrap').style.display = '';
+      document.getElementById('empresa-wrap').style.display = 'flex';
     } else if (er.ok && er.data.length === 1) {
       addOptionEl(sel, er.data[0].id, er.data[0].nombre);
     }

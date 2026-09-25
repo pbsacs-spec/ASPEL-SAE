@@ -253,7 +253,11 @@
     if (er.ok && er.data.length > 1) {
       const sel = document.getElementById('empresa');
       sel.innerHTML = er.data.map(e => `<option value="${e.id}">${escH(e.nombre)}</option>`).join('');
-      sel.value = er.default;
+      // Respeta la empresa con la que se llego aqui (ej. desde "Crear etiqueta"
+      // en /embarques, que ya trae &empresa=... en el link) en vez de siempre
+      // caer en la empresa por defecto del servidor.
+      const empresaUrl = new URLSearchParams(location.search).get('empresa');
+      sel.value = (empresaUrl && er.data.some(e => e.id === empresaUrl)) ? empresaUrl : er.default;
       document.getElementById('empresa-card').style.display = 'block';
     }
     const cveDoc = new URLSearchParams(location.search).get('factura');

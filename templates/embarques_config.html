@@ -83,21 +83,11 @@
     <div class="card-hdr">Datos del emisor (aparecen en la etiqueta de embarque)</div>
     <div class="card-body">
       <form method="POST" action="/embarques/configuracion?empresa={{ empresa_id }}">
-        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;">
-          <input type="checkbox" name="modo_cliente" value="1" id="modo_cliente"
-                 {% if modo_cliente %}checked{% endif %} onchange="toggleModoCliente()"
-                 style="margin-top:3px;">
-          <span>
-            <strong>Usar los datos del cliente facturado como Emisor</strong>
-            <div class="hint" style="margin-top:2px;">
-              Para logistica a nombre de terceros: la etiqueta y el comprobante de
-              entrega mostraran el nombre/direccion del cliente de la factura en vez
-              de los datos capturados abajo, y no llevaran el logo de la empresa.
-            </div>
-          </span>
-        </label>
-
-        <div id="campos-emisor-fijo" style="margin-top:14px;">
+        <div class="note" style="margin-bottom:14px;">
+          Estos son los datos por defecto. Al crear una etiqueta se puede elegir, caso
+          por caso, que el Emisor sea el cliente facturado en vez de estos datos
+          (util para logistica a nombre de terceros) -- ver "Nueva etiqueta".
+        </div>
         <label>Nombre de la empresa</label>
         <input type="text" name="nombre_empresa" value="{{ datos.nombre_empresa }}" placeholder="Ej: Mi Empresa SA de CV" required>
         <div class="hint">Aspel SAE guarda este dato encriptado y no se puede leer automaticamente: captura aqui el nombre tal como debe aparecer en la etiqueta.</div>
@@ -146,29 +136,17 @@
             <input type="text" name="telefono" value="{{ datos.telefono }}">
           </div>
         </div>
-        </div>
 
         <div style="margin-top:18px;">
           <button type="submit" class="btn">Guardar</button>
         </div>
       </form>
-      <div class="note" id="nota-emisor-fijo">
+      <div class="note">
         El RFC y la direccion se prellenaron, cuando fue posible, desde el domicilio fiscal
         configurado en Aspel SAE. Revisalos y ajustalos antes de guardar.
       </div>
     </div>
   </div>
-
-  <script>
-    function toggleModoCliente() {
-      const activo = document.getElementById('modo_cliente').checked;
-      const cont = document.getElementById('campos-emisor-fijo');
-      cont.style.opacity = activo ? '.4' : '1';
-      cont.querySelectorAll('input').forEach(inp => { inp.disabled = activo; });
-      document.getElementById('nota-emisor-fijo').style.display = activo ? 'none' : '';
-    }
-    toggleModoCliente();
-  </script>
 
 </div>
 

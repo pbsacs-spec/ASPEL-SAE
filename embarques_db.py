@@ -156,6 +156,12 @@ def init_db():
             if columna not in cols_emb:
                 con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} INTEGER")
 
+        # Migracion: eleccion del Emisor por etiqueta (cliente facturado, para
+        # logistica a nombre de terceros, vs datos fijos de la empresa) -- se
+        # decide al crear cada etiqueta, no es una configuracion global.
+        if "emisor_cliente" not in cols_emb:
+            con.execute("ALTER TABLE embarques ADD COLUMN emisor_cliente INTEGER NOT NULL DEFAULT 0")
+
         if chofer_tabla_nueva or unidad_tabla_nueva:
             # Siembra los catalogos con lo que ya se habia aprendido como texto libre,
             # y liga los embarques existentes por coincidencia de nombre (TRIM) para
@@ -345,12 +351,16 @@ def unidad_obtener_o_crear(descripcion):
         return cur.lastrowid, descripcion
 
 
-def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=None):
+def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=None, emisor_cliente=False):
     """factura: dict con cve_doc, serie, folio, cliente_clave, cliente_nombre.
     destinatario: dict con las claves en _CAMPOS_DEST (sin el prefijo dest_).
     embarque_info: opcional, dict con tipo_embarque/chofer/unidad/paqueteria/guia/
     num_bultos -- si se da, la etiqueta se crea ya como 'embarcado'; si no, queda
-    'pendiente' (se puede marcar despues)."""
+    'pendiente' (se puede marcar despues).
+    emisor_cliente: si True, la etiqueta/comprobante de esta entrega mostraran
+    como Emisor los datos del cliente facturado (logistica a nombre de
+    terceros) en vez de los datos de la empresa -- se decide por etiqueta, no
+    depende de si ya se lleno tipo_embarque/chofer."""
     info = embarque_info or {}
     tipo = info.get("tipo_embarque")
     chofer_id, unidad_id = info.get("chofer_id"), info.get("unidad_id")
@@ -366,6 +376,7 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
         fecha_embarque, embarcado_por = None, None
         chofer_id = unidad_id = None
     num_bultos = max(1, min(200, int(info.get("num_bultos") or 1)))
+    emisor_cliente = 1 if emisor_cliente else 0
     token_entrega = secrets.token_urlsafe(24)
 
     with _LOCK, _conn() as con:
@@ -375,15 +386,15 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
                 cliente_clave, cliente_nombre,
                 {", ".join(_CAMPOS_DEST)},
                 estatus, tipo_embarque, chofer, unidad, chofer_id, unidad_id,
-                paqueteria, guia, num_bultos,
+                paqueteria, guia, num_bultos, emisor_cliente,
                 fecha_creacion, creado_por, fecha_embarque, embarcado_por, token_entrega
             ) VALUES (?, ?, ?, ?, ?, ?, {", ".join("?" for _ in _CAMPOS_DEST)},
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             empresa_id, factura["cve_doc"], factura.get("serie"), factura.get("folio"),
             factura.get("cliente_clave"), factura.get("cliente_nombre"),
             *[destinatario.get(c[len("dest_"):], "") for c in _CAMPOS_DEST],
-            estatus, tipo, chofer, unidad, chofer_id, unidad_id, paqueteria, guia, num_bultos,
+            estatus, tipo, chofer, unidad, chofer_id, unidad_id, paqueteria, guia, num_bultos, emisor_cliente,
             _ahora(), creado_por, fecha_embarque, embarcado_por, token_entrega,
         ))
         embarque_id = cur.lastrowid

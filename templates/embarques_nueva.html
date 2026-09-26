@@ -140,6 +140,19 @@
         <label>Referencia / indicaciones para la paqueteria</label>
         <input type="text" id="d-referencia" placeholder="Entre calles, color de fachada, etc.">
 
+        <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;margin-top:14px;">
+          <input type="checkbox" id="e-emisor-cliente" style="margin-top:3px;">
+          <span>
+            <strong>El Emisor sera el cliente facturado (no la empresa)</strong>
+            <div class="hint" style="margin-top:2px;">
+              Para logistica a nombre de terceros: la etiqueta y el comprobante de esta
+              entrega mostraran el nombre/direccion del cliente de la factura en vez de
+              los datos de la empresa, y no llevaran su logo. Marcalo solo para esta
+              entrega si aplica -- no afecta a las demas etiquetas.
+            </div>
+          </span>
+        </label>
+
         <div class="seccion-opcional">
           <label>Datos de embarque (opcional, se puede completar despues)</label>
           <div class="hint">Si ya sabes quien lo va a llevar, captura los datos ahora; si no, deja esto en blanco y la etiqueta queda "pendiente".</div>
@@ -388,10 +401,11 @@
       const empresa = empresaActual();
       const p = new URLSearchParams();
       if (empresa) p.set('empresa', empresa);
+      const emisorCliente = document.getElementById('e-emisor-cliente').checked;
       const res = await fetch('/api/embarques?' + p, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ factura: facturaElegida, destinatario, embarque }),
+        body: JSON.stringify({ factura: facturaElegida, destinatario, embarque, emisor_cliente: emisorCliente }),
       }).then(r => r.json());
 
       if (!res.ok) {

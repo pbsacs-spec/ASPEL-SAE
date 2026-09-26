@@ -780,8 +780,11 @@ def _truncar(pdf, texto, ancho_mm):
     return (texto + "...") if texto else ""
 
 
+_QR_NAV_SIZE = 15  # mm, QR "como llegar" junto al bloque de Destinatario
+
+
 def _dibujar_encabezado(pdf, slot_x, slot_y, slot_w, completo, bulto, num_bultos,
-                         folio_txt, fecha, emisor, destinatario, logo):
+                         folio_txt, fecha, emisor, destinatario, logo, qr_mapa_png=None):
     """Dibuja el encabezado de una etiqueta (completo, con Emisor/Destinatario, o
     resumido para una hoja de continuacion). Regresa el y donde debe empezar la
     tabla de productos."""
@@ -819,11 +822,14 @@ def _dibujar_encabezado(pdf, slot_x, slot_y, slot_w, completo, bulto, num_bultos
     col_w = (cw - 4) / 2
     col2_x = cx + col_w + 4
 
+    dest_qr_w = (_QR_NAV_SIZE + 2) if qr_mapa_png else 0
+    col_w_dest = col_w - dest_qr_w
+
     pdf.set_xy(cx, y)
     pdf.set_font("Helvetica", "B", 7)
     pdf.cell(col_w, 3.5, "EMISOR (remite)", new_x=XPos.LEFT, new_y=YPos.TOP)
     pdf.set_xy(col2_x, y)
-    pdf.cell(col_w, 3.5, "DESTINATARIO (recibe)", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.cell(col_w_dest, 3.5, "DESTINATARIO (recibe)", new_x=XPos.LEFT, new_y=YPos.TOP)
     y_txt = y + 3.5
 
     extra_emisor = " · ".join(x for x in [
@@ -848,7 +854,17 @@ def _dibujar_encabezado(pdf, slot_x, slot_y, slot_w, completo, bulto, num_bultos
     for i, linea in enumerate(lineas_dest):
         pdf.set_xy(col2_x, y_txt + i * 3.6)
         pdf.set_font("Helvetica", "B" if i == 0 else "", 7.5 if i == 0 else 7)
-        pdf.cell(col_w, 3.6, _truncar(pdf, linea, col_w), new_x=XPos.LEFT, new_y=YPos.TOP)
+        pdf.cell(col_w_dest, 3.6, _truncar(pdf, linea, col_w_dest), new_x=XPos.LEFT, new_y=YPos.TOP)
+
+    if qr_mapa_png:
+        qr_x = col2_x + col_w - _QR_NAV_SIZE
+        try:
+            pdf.image(qr_mapa_png, x=qr_x, y=y_txt, w=_QR_NAV_SIZE, h=_QR_NAV_SIZE)
+            pdf.set_xy(qr_x, y_txt + _QR_NAV_SIZE + 0.3)
+            pdf.set_font("Helvetica", "", 5)
+            pdf.cell(_QR_NAV_SIZE, 2.5, "Como llegar", align="C", new_x=XPos.LEFT, new_y=YPos.TOP)
+        except Exception:
+            pass
 
     y = y_txt + 5 * 3.6 + 2
     pdf.dashed_line(cx, y, cx + cw, y, 1, 1)
@@ -886,8 +902,8 @@ def _dibujar_total(pdf, cx, y, cw, total):
     pdf.cell(cw - _CANT_W, _ROW_H, "TOTAL", new_x=XPos.LEFT, new_y=YPos.TOP)
 
 
-_FOOTER_H = 24  # mm, franja al pie de cada etiqueta: dato de embarque + QRs
-_QR_SIZE = 15   # mm -- reducido de 18 para que quepan los 2 QRs (entrega y como llegar)
+_FOOTER_H = 24  # mm, franja al pie de cada etiqueta: dato de embarque + QR de entrega
+_QR_SIZE = 18   # mm
 
 
 def _qr_png(data):
@@ -904,32 +920,28 @@ def _tam_imagen_px(fuente):
         return img.size
 
 
-def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png, qr_mapa_png=None):
+def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
     """Pie de pagina: a la derecha el QR para que el chofer confirme la entrega desde
-    su celular, y junto a el (si se conoce la direccion) el QR para abrir la ruta en
-    Google Maps/Waze; a la izquierda, si ya esta embarcada, el chofer/unidad o
-    paqueteria/guia."""
+    su celular; a la izquierda, si ya esta embarcada, el chofer/unidad o paqueteria/guia.
+    El QR "como llegar" va aparte, junto al bloque de Destinatario (ver
+    _dibujar_encabezado) para no confundirlo con este."""
     cx = slot_x + _PAD
     cw = slot_w - 2 * _PAD
     y_top = slot_y + slot_h - _PAD - _FOOTER_H + 1
     pdf.line(cx, y_top, cx + cw, y_top)
 
-    borde_der = cx + cw
-    for png, etiqueta in ((qr_png, "Confirmar entrega"), (qr_mapa_png, "Como llegar")):
-        if not png:
-            continue
-        qr_x = borde_der - _QR_SIZE
+    if qr_png:
+        qr_x = cx + cw - _QR_SIZE
         qr_y = y_top + 1.5
         try:
-            pdf.image(png, x=qr_x, y=qr_y, w=_QR_SIZE, h=_QR_SIZE)
+            pdf.image(qr_png, x=qr_x, y=qr_y, w=_QR_SIZE, h=_QR_SIZE)
             pdf.set_xy(qr_x, qr_y + _QR_SIZE + 0.5)
-            pdf.set_font("Helvetica", "", 5.5)
-            pdf.cell(_QR_SIZE, 3, etiqueta, align="C", new_x=XPos.LEFT, new_y=YPos.TOP)
-            borde_der = qr_x - 2
+            pdf.set_font("Helvetica", "", 6)
+            pdf.cell(_QR_SIZE, 3, "Confirmar entrega", align="C", new_x=XPos.LEFT, new_y=YPos.TOP)
         except Exception:
             pass
 
-    texto_w = borde_der - cx - 1
+    texto_w = cw - _QR_SIZE - 3
     if e["estatus"] == "embarcado":
         if e["tipo_embarque"] == "propio":
             lineas = ["Envio propio", f"Chofer: {e['chofer'] or ''}", f"Unidad: {e['unidad'] or ''}"]
@@ -1006,8 +1018,8 @@ def etiqueta_pdf(embarque_id):
         y0 = nueva_etiqueta()
         y_limite = y0 + slot_h - _PAD - _FOOTER_H
         y = _dibujar_encabezado(pdf, margen, y0, slot_w, True, bulto, num_bultos,
-                                 folio_txt, fecha, emisor, e, logo)
-        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png, qr_mapa_png)
+                                 folio_txt, fecha, emisor, e, logo, qr_mapa_png)
+        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
 
         idx = 0
         primero = True
@@ -1019,7 +1031,7 @@ def etiqueta_pdf(embarque_id):
                 y_limite = y0 + slot_h - _PAD - _FOOTER_H
                 y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                          folio_txt, fecha, emisor, e, logo)
-                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png, qr_mapa_png)
+                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
             primero = False
 
             while idx < len(productos) and y + _ROW_H <= y_limite:
@@ -1033,7 +1045,7 @@ def etiqueta_pdf(embarque_id):
                     y_limite = y0 + slot_h - _PAD - _FOOTER_H
                     y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                              folio_txt, fecha, emisor, e, logo)
-                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png, qr_mapa_png)
+                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
                 _dibujar_total(pdf, cx, y, cw, total_cant)
                 break
             # quedan productos pero no cupieron mas filas en esta etiqueta: continuar

@@ -39,6 +39,7 @@
     .btn:hover { opacity: .85; }
     .btn-sm { padding: 5px 12px; font-size: .78rem; }
     .btn-secondary { background: #e8ecf0; color: #333; }
+    .btn-danger { background: #b02020; color: #fff; }
     .btn:disabled { opacity: .45; cursor: not-allowed; }
 
     table { width: 100%; border-collapse: collapse; font-size: .84rem; }
@@ -106,6 +107,10 @@
 
   <div class="card">
     <div class="card-body">
+      <div class="atajos" style="margin-bottom:12px;">
+        <button class="btn btn-sm" id="tab-activas" onclick="cambiarVista('activas')">Etiquetas</button>
+        <button class="btn btn-sm btn-secondary" id="tab-archivadas" onclick="cambiarVista('archivadas')">Archivadas</button>
+      </div>
       <div class="filtros">
         <div class="fg" id="empresa-wrap">
           <label>Empresa</label>
@@ -217,6 +222,16 @@
     cargar();
   }).catch(cargar);
 
+  let vistaActual = 'activas';
+
+  function cambiarVista(v) {
+    vistaActual = v;
+    document.getElementById('tab-activas').className = v === 'activas' ? 'btn btn-sm' : 'btn btn-sm btn-secondary';
+    document.getElementById('tab-archivadas').className = v === 'archivadas' ? 'btn btn-sm' : 'btn btn-sm btn-secondary';
+    document.getElementById('contenedorPendientes').style.display = v === 'activas' ? '' : 'none';
+    cargar();
+  }
+
   async function cargar() {
     const empresa = empresaActual();
     document.getElementById('contenedor').innerHTML = '<div class="empty">Consultando...</div>';
@@ -229,6 +244,7 @@
       if (estatus) p.set('estatus', estatus);
       if (desde) p.set('desde', desde);
       if (hasta) p.set('hasta', hasta);
+      if (vistaActual === 'archivadas') p.set('archivadas', '1');
 
       const res = await fetch('/api/embarques?' + p).then(r => r.json());
       if (!res.ok) {
@@ -240,7 +256,7 @@
     } catch (e) {
       document.getElementById('contenedor').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
     }
-    cargarPendientes();
+    if (vistaActual === 'activas') cargarPendientes();
   }
 
   async function cargarPendientes() {
@@ -289,13 +305,14 @@
 
   function render() {
     const cont = document.getElementById('contenedor');
+    const titulo = vistaActual === 'archivadas' ? 'Etiquetas archivadas' : 'Etiquetas';
     if (!filas.length) {
-      cont.innerHTML = '<div class="card"><div class="empty">Sin etiquetas de embarque con estos filtros.</div></div>';
+      cont.innerHTML = `<div class="card"><div class="empty">Sin etiquetas${vistaActual === 'archivadas' ? ' archivadas' : ' de embarque'} con estos filtros.</div></div>`;
       return;
     }
     cont.innerHTML = `
       <div class="card">
-        <div class="card-hdr">Etiquetas (${filas.length})</div>
+        <div class="card-hdr">${titulo} (${filas.length})</div>
         <div class="table-scroll">${tablaHtml()}</div>
       </div>
     `;
@@ -320,16 +337,25 @@
       }
 
       let acciones;
-      if (f.estatus === 'entregado') {
+      if (vistaActual === 'archivadas') {
+        acciones = `<button class="btn btn-sm btn-secondary" onclick="verEntrega(${f.id})">Ver entrega</button>`;
+        if (ES_ADMIN) {
+          acciones += ` <button class="btn btn-sm btn-secondary" onclick="desarchivar(${f.id})">Desarchivar</button>`;
+        }
+      } else if (f.estatus === 'entregado') {
         acciones = `<button class="btn btn-sm btn-secondary" onclick="verEntrega(${f.id})">Ver entrega</button>`;
         if (ES_ADMIN) {
           acciones += ` <button class="btn btn-sm btn-secondary" onclick="reactivar(${f.id}, '${escA(folio)}')">Reactivar</button>`;
+          acciones += ` <button class="btn btn-sm btn-secondary" onclick="archivar(${f.id})">Archivar</button>`;
         }
       } else {
         acciones = `
           <a class="btn btn-sm btn-secondary" href="/embarques/${f.id}/etiqueta.pdf?empresa=${encodeURIComponent(empresaActual())}" target="_blank">Etiqueta</a>
           <button class="btn btn-sm" onclick="abrirEmbarcar(${f.id})">${f.estatus === 'pendiente' ? 'Marcar embarcado' : 'Editar embarque'}</button>
         `;
+        if (ES_ADMIN) {
+          acciones += ` <button class="btn btn-sm btn-danger" onclick="eliminarEtiqueta(${f.id}, '${escA(folio)}')">Eliminar</button>`;
+        }
       }
 
       html += `<tr>
@@ -393,6 +419,59 @@
       document.getElementById(`${prefijo}-unidad-nuevo`).value = unidadTextoLegacy;
       document.getElementById(`${prefijo}-unidad-nuevo`).style.display = 'block';
     }
+  }
+
+  // ── Autocompletar colonia/municipio/estado/pais por codigo postal (igual
+  // que en "Nueva etiqueta") -- solo calle y numero quedan de captura libre.
+  let cpTimer = {};
+  function onCpChange(prefijo) {
+    clearTimeout(cpTimer[prefijo]);
+    const cp = document.getElementById(`${prefijo}-cp`).value.trim();
+    if (!/^\d{5}$/.test(cp)) {
+      _cpNoEncontrado(prefijo, cp ? 'Faltan digitos del codigo postal.' : '');
+      return;
+    }
+    cpTimer[prefijo] = setTimeout(() => _consultarCp(prefijo, cp), 400);
+  }
+
+  async function _consultarCp(prefijo, cp) {
+    const msg = document.getElementById(`${prefijo}-cp-msg`);
+    msg.textContent = 'Buscando...';
+    try {
+      const res = await fetch(`/api/cp/${cp}`).then(r => r.json());
+      if (!res.ok || !res.data.length) {
+        _cpNoEncontrado(prefijo, 'Codigo postal no encontrado -- captura colonia/municipio/estado a mano.');
+        return;
+      }
+      const sel = document.getElementById(`${prefijo}-colonia-sel`);
+      const coloniaActual = document.getElementById(`${prefijo}-colonia`).value.trim().toLowerCase();
+      sel.innerHTML = res.data.map(c =>
+        `<option value="${escH(c.colonia)}">${escH(c.colonia)}${c.tipo ? ' (' + escH(c.tipo) + ')' : ''}</option>`
+      ).join('');
+      const coincide = res.data.find(c => c.colonia.toLowerCase() === coloniaActual);
+      sel.value = coincide ? coincide.colonia : res.data[0].colonia;
+      sel.style.display = '';
+      document.getElementById(`${prefijo}-colonia`).value = sel.value;
+      document.getElementById(`${prefijo}-colonia`).readOnly = true;
+      document.getElementById(`${prefijo}-municipio`).value = res.data[0].municipio;
+      document.getElementById(`${prefijo}-municipio`).readOnly = true;
+      document.getElementById(`${prefijo}-estado`).value = res.data[0].estado;
+      document.getElementById(`${prefijo}-estado`).readOnly = true;
+      document.getElementById(`${prefijo}-pais`).value = 'Mexico';
+      document.getElementById(`${prefijo}-pais`).readOnly = true;
+      msg.textContent = res.data.length > 1 ? `${res.data.length} colonias para este CP -- elige la correcta.` : '';
+    } catch (e) {
+      _cpNoEncontrado(prefijo, 'Error al consultar el codigo postal -- captura a mano.');
+    }
+  }
+
+  function _cpNoEncontrado(prefijo, mensaje) {
+    document.getElementById(`${prefijo}-colonia-sel`).style.display = 'none';
+    document.getElementById(`${prefijo}-colonia`).readOnly = false;
+    document.getElementById(`${prefijo}-municipio`).readOnly = false;
+    document.getElementById(`${prefijo}-estado`).readOnly = false;
+    document.getElementById(`${prefijo}-pais`).readOnly = false;
+    document.getElementById(`${prefijo}-cp-msg`).textContent = mensaje;
   }
 
   function onCambioChofer(prefijo) {
@@ -476,9 +555,51 @@
     const folio = `${f.factura_serie || ''}${f.factura_folio || ''}`;
     const yaEmbarcado = f.estatus === 'embarcado';
     const tipoActual = f.tipo_embarque || 'propio';
+    const puedeEditarDestino = !f.fecha_impresion;
 
     document.getElementById('modalTitulo').textContent = `${yaEmbarcado ? 'Editar embarque' : 'Marcar embarcado'} — ${folio}`;
     document.getElementById('modalBody').innerHTML = `
+      ${puedeEditarDestino ? `
+      <div style="margin-bottom:18px;padding-bottom:16px;border-bottom:1px dashed #ccc;">
+        <label style="font-weight:700;">Datos de destino</label>
+        <div class="hint" style="margin-bottom:8px;">Se puede editar mientras la etiqueta no se haya impreso.</div>
+
+        <label>Nombre / Razon social</label>
+        <input type="text" id="m-d-nombre" value="${escH(f.dest_nombre || '')}">
+
+        <label>Codigo postal</label>
+        <input type="text" id="m-d-cp" inputmode="numeric" maxlength="5" value="${escH(f.dest_cp || '')}" oninput="onCpChange('m-d')">
+        <div class="hint" id="m-d-cp-msg"></div>
+
+        <div class="form-grid">
+          <div><label>Calle</label><input type="text" id="m-d-calle" value="${escH(f.dest_calle || '')}"></div>
+          <div><label>Numero ext.</label><input type="text" id="m-d-numext" value="${escH(f.dest_numext || '')}"></div>
+        </div>
+
+        <label>Colonia</label>
+        <select id="m-d-colonia-sel" style="display:none;" onchange="document.getElementById('m-d-colonia').value = this.value"></select>
+        <input type="text" id="m-d-colonia" value="${escH(f.dest_colonia || '')}">
+
+        <div class="form-grid">
+          <div><label>Municipio / Delegacion</label><input type="text" id="m-d-municipio" value="${escH(f.dest_municipio || '')}"></div>
+          <div><label>Estado</label><input type="text" id="m-d-estado" value="${escH(f.dest_estado || '')}"></div>
+        </div>
+        <div class="form-grid">
+          <div><label>Pais</label><input type="text" id="m-d-pais" value="${escH(f.dest_pais || 'Mexico')}"></div>
+          <div><label>Telefono</label><input type="text" id="m-d-telefono" value="${escH(f.dest_telefono || '')}"></div>
+        </div>
+        <label>Referencia</label>
+        <input type="text" id="m-d-referencia" value="${escH(f.dest_referencia || '')}">
+
+        <div class="modal-err" id="m-d-error"></div>
+        <div style="margin-top:10px;">
+          <button type="button" class="btn btn-sm btn-secondary" onclick="guardarDestinatario(${id})">Guardar destino</button>
+        </div>
+      </div>
+      ` : `
+      <div class="hint" style="margin-bottom:18px;">Esta etiqueta ya se imprimio: el destino ya no se puede editar. Si es necesario, pide a un administrador que elimine esta etiqueta (si aun no se entrega) y crea una nueva.</div>
+      `}
+
       <label>Tipo de embarque</label>
       <select id="m-tipo" onchange="toggleTipoEmbarque()">
         <option value="propio" ${tipoActual === 'propio' ? 'selected' : ''}>Reparto propio</option>
@@ -518,6 +639,42 @@
     document.getElementById('overlay').classList.add('show');
     cargarCatalogo('paqueteria', 'lista-paqueteria');
     llenarSelectsChoferUnidad('m', f.chofer_id, f.unidad_id, f.chofer, f.unidad);
+    if (puedeEditarDestino) onCpChange('m-d');
+  }
+
+  async function guardarDestinatario(id) {
+    const destinatario = {
+      nombre: document.getElementById('m-d-nombre').value.trim(),
+      calle: document.getElementById('m-d-calle').value.trim(),
+      numext: document.getElementById('m-d-numext').value.trim(),
+      colonia: document.getElementById('m-d-colonia').value.trim(),
+      cp: document.getElementById('m-d-cp').value.trim(),
+      municipio: document.getElementById('m-d-municipio').value.trim(),
+      estado: document.getElementById('m-d-estado').value.trim(),
+      pais: document.getElementById('m-d-pais').value.trim(),
+      telefono: document.getElementById('m-d-telefono').value.trim(),
+      referencia: document.getElementById('m-d-referencia').value.trim(),
+    };
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+    const err = document.getElementById('m-d-error');
+    err.style.display = 'none';
+    try {
+      const res = await fetch(`/api/embarques/${id}/destinatario?` + p, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destinatario }),
+      }).then(r => r.json());
+      if (!res.ok) { err.textContent = res.error; err.style.display = 'block'; return; }
+      err.style.display = 'block';
+      err.style.color = '#1e8449';
+      err.textContent = 'Destino actualizado.';
+      cargar();
+    } catch (e) {
+      err.textContent = 'Error de conexion: ' + e.message;
+      err.style.display = 'block';
+    }
   }
 
   function toggleTipoEmbarque() {
@@ -586,6 +743,46 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ motivo: motivo.trim() }),
       }).then(r => r.json());
+      if (!res.ok) { alert(res.error); return; }
+      cargar();
+    } catch (e) {
+      alert('Error de conexion: ' + e.message);
+    }
+  }
+
+  async function eliminarEtiqueta(id, folio) {
+    if (!confirm(`Eliminar la etiqueta ${folio} por completo? Esta accion no se puede deshacer.`)) return;
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+    try {
+      const res = await fetch(`/api/embarques/${id}?` + p, { method: 'DELETE' }).then(r => r.json());
+      if (!res.ok) { alert(res.error); return; }
+      cargar();
+    } catch (e) {
+      alert('Error de conexion: ' + e.message);
+    }
+  }
+
+  async function archivar(id) {
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+    try {
+      const res = await fetch(`/api/embarques/${id}/archivar?` + p, { method: 'POST' }).then(r => r.json());
+      if (!res.ok) { alert(res.error); return; }
+      cargar();
+    } catch (e) {
+      alert('Error de conexion: ' + e.message);
+    }
+  }
+
+  async function desarchivar(id) {
+    const empresa = empresaActual();
+    const p = new URLSearchParams();
+    if (empresa) p.set('empresa', empresa);
+    try {
+      const res = await fetch(`/api/embarques/${id}/desarchivar?` + p, { method: 'POST' }).then(r => r.json());
       if (!res.ok) { alert(res.error); return; }
       cargar();
     } catch (e) {

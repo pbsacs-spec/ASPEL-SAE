@@ -162,6 +162,14 @@ def init_db():
         if "emisor_cliente" not in cols_emb:
             con.execute("ALTER TABLE embarques ADD COLUMN emisor_cliente INTEGER NOT NULL DEFAULT 0")
 
+        # Migracion: saber si una etiqueta ya se imprimio (bloquea editar el
+        # destino) y si esta archivada (oculta de la vista normal, solo para
+        # consulta -- ver marcar_impreso/actualizar_destinatario/archivar).
+        if "fecha_impresion" not in cols_emb:
+            con.execute("ALTER TABLE embarques ADD COLUMN fecha_impresion TEXT")
+        if "archivado" not in cols_emb:
+            con.execute("ALTER TABLE embarques ADD COLUMN archivado INTEGER NOT NULL DEFAULT 0")
+
         if chofer_tabla_nueva or unidad_tabla_nueva:
             # Siembra los catalogos con lo que ya se habia aprendido como texto libre,
             # y liga los embarques existentes por coincidencia de nombre (TRIM) para
@@ -404,9 +412,9 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
     return embarque_id
 
 
-def listar_embarques(empresa_id, estatus=None, desde=None, hasta=None):
-    where = ["empresa_id = ?"]
-    params = [empresa_id]
+def listar_embarques(empresa_id, estatus=None, desde=None, hasta=None, archivadas=False):
+    where = ["empresa_id = ?", "archivado = ?"]
+    params = [empresa_id, 1 if archivadas else 0]
     if estatus:
         where.append("estatus = ?")
         params.append(estatus)
@@ -571,6 +579,49 @@ def reactivar(embarque_id, admin_user, motivo):
             WHERE id = ?
         """, (notas_nuevas, embarque_id))
         return True
+
+
+def marcar_impreso(embarque_id):
+    """Se llama la primera vez que se genera de verdad el PDF de la etiqueta
+    (ver embarques.py: etiqueta_pdf). No pisa la fecha si ya se habia
+    impreso antes -- queda la fecha de la primera impresion, que es la que
+    bloquea poder editar el destino."""
+    with _LOCK, _conn() as con:
+        con.execute(
+            "UPDATE embarques SET fecha_impresion = ? WHERE id = ? AND fecha_impresion IS NULL",
+            (_ahora(), embarque_id),
+        )
+
+
+def actualizar_destinatario(embarque_id, destinatario):
+    """Sobreescribe los datos de destino. Quien llama (embarques.py) ya debe
+    haber verificado que la etiqueta no se ha impreso ni entregado -- aqui
+    solo se escribe, sin repetir esa validacion."""
+    with _LOCK, _conn() as con:
+        con.execute(f"""
+            UPDATE embarques SET {", ".join(f"{c} = ?" for c in _CAMPOS_DEST)}
+            WHERE id = ?
+        """, (*[destinatario.get(c[len("dest_"):], "") for c in _CAMPOS_DEST], embarque_id))
+
+
+def eliminar_embarque(embarque_id):
+    """Borra la etiqueta por completo (fotos de entrega incluidas, si las
+    tuviera). Quien llama ya debe haber verificado que no esta entregada --
+    una vez entregada no se puede eliminar nunca, solo archivar."""
+    with _LOCK, _conn() as con:
+        row = con.execute("SELECT fotos_entrega FROM embarques WHERE id = ?", (embarque_id,)).fetchone()
+        if row:
+            _borrar_fotos(row["fotos_entrega"])
+        con.execute("DELETE FROM embarques WHERE id = ?", (embarque_id,))
+
+
+def archivar(embarque_id, archivado=True):
+    """Oculta (o vuelve a mostrar) una etiqueta entregada de la vista normal,
+    sin borrarla -- queda disponible indefinidamente en la vista de
+    archivadas para consulta (ej. evidencia de entrega ante dudas de un
+    cliente)."""
+    with _LOCK, _conn() as con:
+        con.execute("UPDATE embarques SET archivado = ? WHERE id = ?", (1 if archivado else 0, embarque_id))
 
 
 def buscar_por_folio(empresa_id, folio):

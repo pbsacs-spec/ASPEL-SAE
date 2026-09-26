@@ -548,8 +548,9 @@ def api_listar():
     estatus = request.args.get("estatus", "").strip() or None
     desde = request.args.get("desde", "").strip() or None
     hasta = request.args.get("hasta", "").strip() or None
+    archivadas = request.args.get("archivadas", "").strip() == "1"
     try:
-        data = embarques_db.listar_embarques(empresa, estatus=estatus, desde=desde, hasta=hasta)
+        data = embarques_db.listar_embarques(empresa, estatus=estatus, desde=desde, hasta=hasta, archivadas=archivadas)
         return jsonify({"ok": True, "data": data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -707,6 +708,83 @@ def api_reactivar(embarque_id):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@embarques_bp.route("/api/embarques/<int:embarque_id>/destinatario", methods=["POST"])
+@require_embarques
+def api_editar_destinatario(embarque_id):
+    """Solo se puede editar el destino mientras la etiqueta no se haya
+    impreso ni entregado -- una vez impresa, la direccion ya quedo en el
+    papel fisico y cambiarla en el sistema crearia un desfase."""
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    if e.get("fecha_impresion"):
+        return jsonify({
+            "ok": False,
+            "error": "Esta etiqueta ya se imprimio, el destino ya no se puede editar. "
+                     "Si el destino esta mal, pide a un administrador que elimine esta "
+                     "etiqueta (si aun no se entrega) y crea una nueva.",
+        }), 409
+    if e["estatus"] == "entregado":
+        return jsonify({"ok": False, "error": "Esta etiqueta ya fue entregada."}), 409
+
+    body = request.get_json(silent=True) or {}
+    destinatario = body.get("destinatario") or {}
+    if not (destinatario.get("nombre") or "").strip():
+        return jsonify({"ok": False, "error": "El nombre del destinatario es obligatorio."}), 400
+
+    try:
+        embarques_db.actualizar_destinatario(embarque_id, destinatario)
+        return jsonify({"ok": True})
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)}), 500
+
+
+@embarques_bp.route("/api/embarques/<int:embarque_id>", methods=["DELETE"])
+@require_admin_embarques
+def api_eliminar(embarque_id):
+    """Solo administradores, y solo si la etiqueta no ha sido entregada --
+    una vez entregada no se puede eliminar nunca (queda como evidencia; ver
+    /archivar para ocultarla de la vista normal sin perderla)."""
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    if e["estatus"] == "entregado":
+        return jsonify({"ok": False, "error": "No se puede eliminar una etiqueta ya entregada -- se puede archivar."}), 409
+    try:
+        embarques_db.eliminar_embarque(embarque_id)
+        return jsonify({"ok": True})
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)}), 500
+
+
+@embarques_bp.route("/api/embarques/<int:embarque_id>/archivar", methods=["POST"])
+@require_admin_embarques
+def api_archivar(embarque_id):
+    """Oculta una etiqueta ya entregada de la vista normal (queda en la vista
+    de Archivadas, para consulta, indefinidamente -- no vuelve a aparecer sola)."""
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    if e["estatus"] != "entregado":
+        return jsonify({"ok": False, "error": "Solo se pueden archivar etiquetas ya entregadas."}), 409
+    embarques_db.archivar(embarque_id, True)
+    return jsonify({"ok": True})
+
+
+@embarques_bp.route("/api/embarques/<int:embarque_id>/desarchivar", methods=["POST"])
+@require_admin_embarques
+def api_desarchivar(embarque_id):
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    embarques_db.archivar(embarque_id, False)
+    return jsonify({"ok": True})
 
 
 # ── PDF de la etiqueta (media carta, hasta 2 por hoja, 1 etiqueta por bulto) ─
@@ -1035,6 +1113,7 @@ def etiqueta_pdf(embarque_id):
             # quedan productos pero no cupieron mas filas en esta etiqueta: continuar
 
     pdf_bytes = bytes(pdf.output())
+    embarques_db.marcar_impreso(embarque_id)
     return send_file(
         io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False,
         download_name=f"etiqueta_{folio_txt}.pdf",

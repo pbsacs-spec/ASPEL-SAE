@@ -191,14 +191,13 @@ def _url_entrega(token):
     return request.url_root.rstrip("/") + "/entrega/" + token
 
 
-def _url_mapa(direccion):
-    """URL publica de la pagina para elegir Google Maps o Waze (ver /mapa),
-    con el mismo criterio de host/puerto que _url_entrega."""
-    q = quote(direccion)
-    if os.path.exists(_HTTPS_CERT):
-        host = request.host.split(":")[0]
-        return f"https://{host}/mapa?dir={q}"
-    return request.url_root.rstrip("/") + "/mapa?dir=" + q
+def _url_gps(direccion):
+    """Liga directa a Google Maps (no pasa por nuestro servidor): una
+    paqueteria externa que reciba el bulto puede escanear el QR y le
+    funciona con solo tener internet, sin necesitar VPN ni estar en la
+    misma red que este servidor -- a diferencia de un link propio como
+    /entrega, que si necesita alcanzar este servidor."""
+    return f"https://www.google.com/maps/dir/?api=1&destination={quote(direccion)}"
 
 
 def _direccion_destino(e):
@@ -471,22 +470,6 @@ def api_reporte_entregas():
 
 # ── Confirmacion de entrega (publica, sin login -- el chofer no tiene cuenta) ─
 
-@embarques_bp.route("/mapa")
-def mapa_elegir_app():
-    """Pagina publica (sin login, se abre desde el celular del chofer al
-    escanear el QR de "como llegar") para elegir entre Google Maps o Waze --
-    un solo QR/liga no puede abrir dos apps distintas, asi que se deja elegir."""
-    direccion = request.args.get("dir", "").strip()
-    if not direccion:
-        abort(404)
-    q = quote(direccion)
-    urls = {
-        "google": f"https://www.google.com/maps/dir/?api=1&destination={q}",
-        "waze": f"https://waze.com/ul?q={q}&navigate=yes",
-    }
-    return render_template("mapa_elegir.html", direccion=direccion, urls=urls)
-
-
 @embarques_bp.route("/api/mapa/qr")
 @require_embarques
 def api_mapa_qr():
@@ -496,7 +479,7 @@ def api_mapa_qr():
     direccion = request.args.get("dir", "").strip()
     if not direccion:
         abort(400)
-    return Response(_qr_png(_url_mapa(direccion)), mimetype="image/png")
+    return Response(_qr_png(_url_gps(direccion)), mimetype="image/png")
 
 
 @embarques_bp.route("/entrega/<token>")
@@ -981,7 +964,7 @@ def etiqueta_pdf(embarque_id):
     num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
     qr_png = _qr_png(_url_entrega(e["token_entrega"]))
     direccion_destino = _direccion_destino(e)
-    qr_mapa_png = _qr_png(_url_mapa(direccion_destino)) if direccion_destino else None
+    qr_mapa_png = _qr_png(_url_gps(direccion_destino)) if direccion_destino else None
 
     try:
         productos = _partidas_factura(empresa, e["factura_cve_doc"])

@@ -58,9 +58,74 @@ def get_emisor(empresa_id):
 
 
 def set_emisor(empresa_id, datos):
+    """datos: request.form. Solo actualiza los campos que de verdad llegaron
+    en el POST -- si el campo no viene (ej. estaba disabled porque modo_cliente
+    esta activo en el formulario) se deja el valor ya guardado sin tocar, en
+    vez de borrarlo."""
     cfg = _leer_emisor_cfg()
-    cfg[empresa_id] = {c: (datos.get(c) or "").strip() for c in _CAMPOS_EMISOR}
+    seccion = dict(cfg[empresa_id]) if cfg.has_section(empresa_id) else {}
+    for c in _CAMPOS_EMISOR:
+        if c in datos:
+            seccion[c] = (datos.get(c) or "").strip()
+    cfg[empresa_id] = seccion
     _guardar_emisor_cfg(cfg)
+
+
+def emisor_modo_cliente(empresa_id):
+    """True si esta empresa muestra en la etiqueta/comprobante los datos del
+    cliente facturado como Emisor, en vez de un Emisor fijo -- para negocios
+    que hacen logistica a nombre de un tercero (entregan a los clientes de su
+    cliente) y no deben aparecer ellos mismos como remitente."""
+    cfg = _leer_emisor_cfg()
+    return cfg.has_section(empresa_id) and cfg.getboolean(empresa_id, "modo_cliente", fallback=False)
+
+
+def set_emisor_modo_cliente(empresa_id, activo):
+    cfg = _leer_emisor_cfg()
+    seccion = dict(cfg[empresa_id]) if cfg.has_section(empresa_id) else {}
+    seccion["modo_cliente"] = "true" if activo else "false"
+    cfg[empresa_id] = seccion
+    _guardar_emisor_cfg(cfg)
+
+
+def _emisor_desde_cliente(empresa_id, cliente_clave):
+    """Arma un Emisor con la forma de _CAMPOS_EMISOR a partir de los datos
+    generales (no los de envio) del cliente facturado."""
+    vacio = {c: "" for c in _CAMPOS_EMISOR}
+    if not cliente_clave:
+        return vacio
+    try:
+        _, rows = query("""
+            SELECT NOMBRE, RFC, CALLE, NUMEXT, NUMINT, COLONIA, CODIGO,
+                   MUNICIPIO, ESTADO, PAIS, TELEFONO
+            FROM __CLIE__ WHERE TRIM(CLAVE) = ?
+        """, [cliente_clave], empresa_id=empresa_id)
+        if not rows:
+            return vacio
+        nombre, rfc, calle, numext, numint, colonia, cp, municipio, estado, pais, telefono = rows[0]
+        return {
+            "nombre_empresa": (nombre or "").strip(), "rfc": (rfc or "").strip(),
+            "calle": (calle or "").strip(), "numext": (numext or "").strip(),
+            "numint": (numint or "").strip(), "colonia": (colonia or "").strip(),
+            "cp": (cp or "").strip(), "municipio": (municipio or "").strip(),
+            "estado": (estado or "").strip(), "pais": (pais or "").strip(),
+            "telefono": (telefono or "").strip(),
+        }
+    except Exception:
+        return vacio
+
+
+def _resolver_emisor(empresa_id, cliente_clave):
+    if emisor_modo_cliente(empresa_id):
+        return _emisor_desde_cliente(empresa_id, cliente_clave)
+    return get_emisor(empresa_id)
+
+
+def _resolver_logo(empresa_id):
+    # En modo "cliente" no se muestra el logo de la propia empresa: la
+    # etiqueta/comprobante no debe llevar ninguna marca de quien hace la
+    # logistica, solo del cliente facturado.
+    return None if emisor_modo_cliente(empresa_id) else _logo_empresa(empresa_id)
 
 
 def _sugerido_emisor(empresa_id):
@@ -277,6 +342,7 @@ def pagina_configuracion():
 
     if request.method == "POST":
         set_emisor(empresa_id, request.form)
+        set_emisor_modo_cliente(empresa_id, request.form.get("modo_cliente") == "1")
         flash("Datos del emisor guardados.", "ok")
         return redirect(url_for("embarques.pagina_configuracion", empresa=empresa_id))
 
@@ -287,6 +353,7 @@ def pagina_configuracion():
     return render_template(
         "embarques_config.html", es_admin=(g.role == "admin"),
         empresas=empresas, empresa_id=empresa_id, datos=datos,
+        modo_cliente=emisor_modo_cliente(empresa_id),
     )
 
 
@@ -841,8 +908,8 @@ def etiqueta_pdf(embarque_id):
                      "Si se perdio la etiqueta impresa, pide a un administrador que la reactive.",
         }), 409
 
-    emisor = get_emisor(empresa)
-    logo = _logo_empresa(empresa)
+    emisor = _resolver_emisor(empresa, e["cliente_clave"])
+    logo = _resolver_logo(empresa)
     folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
     fecha = e["fecha_creacion"][:10]
     num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
@@ -1076,8 +1143,8 @@ def _comprobante_pdf(e, emisor, logo):
 def _comprobante_response(e):
     if e["estatus"] != "entregado":
         return jsonify({"ok": False, "error": "Esta etiqueta todavia no ha sido entregada."}), 409
-    emisor = get_emisor(e["empresa_id"])
-    logo = _logo_empresa(e["empresa_id"])
+    emisor = _resolver_emisor(e["empresa_id"], e["cliente_clave"])
+    logo = _resolver_logo(e["empresa_id"])
     pdf_bytes = _comprobante_pdf(e, emisor, logo)
     folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
     return send_file(

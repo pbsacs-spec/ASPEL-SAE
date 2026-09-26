@@ -11,15 +11,17 @@ import datetime
 import io
 import os
 import threading
+from urllib.parse import quote
 
 import qrcode
-from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g, send_file
+from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g, send_file, abort, Response
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos, Align
 
 from db import query, load_empresas
 from auth import require_roles
 import embarques_db
+from codigos_postales import buscar_cp
 
 embarques_bp = Blueprint("embarques", __name__)
 require_embarques = require_roles("administradores", "admin", realm="Aspel Inventario")
@@ -186,6 +188,28 @@ def _url_entrega(token):
         host = request.host.split(":")[0]
         return f"https://{host}:5443/entrega/{token}"
     return request.url_root.rstrip("/") + "/entrega/" + token
+
+
+def _url_mapa(direccion):
+    """URL publica de la pagina para elegir Google Maps o Waze (ver /mapa),
+    con el mismo criterio de host/puerto que _url_entrega."""
+    q = quote(direccion)
+    if os.path.exists(_HTTPS_CERT):
+        host = request.host.split(":")[0]
+        return f"https://{host}:5443/mapa?dir={q}"
+    return request.url_root.rstrip("/") + "/mapa?dir=" + q
+
+
+def _direccion_destino(e):
+    """Texto de direccion completo del destinatario de un embarque, para
+    Google Maps/Waze (no hace falta separar por campo, ellos mismos geolocalizan
+    la cadena de texto)."""
+    calle = f"{e.get('dest_calle') or ''} {e.get('dest_numext') or ''}".strip()
+    partes = [
+        calle, e.get("dest_colonia") or "", e.get("dest_municipio") or "",
+        e.get("dest_estado") or "", e.get("dest_cp") or "", e.get("dest_pais") or "",
+    ]
+    return ", ".join(p for p in partes if p)
 
 
 @embarques_bp.route("/api/facturas/buscar")
@@ -446,6 +470,34 @@ def api_reporte_entregas():
 
 # ── Confirmacion de entrega (publica, sin login -- el chofer no tiene cuenta) ─
 
+@embarques_bp.route("/mapa")
+def mapa_elegir_app():
+    """Pagina publica (sin login, se abre desde el celular del chofer al
+    escanear el QR de "como llegar") para elegir entre Google Maps o Waze --
+    un solo QR/liga no puede abrir dos apps distintas, asi que se deja elegir."""
+    direccion = request.args.get("dir", "").strip()
+    if not direccion:
+        abort(404)
+    q = quote(direccion)
+    urls = {
+        "google": f"https://www.google.com/maps/dir/?api=1&destination={q}",
+        "waze": f"https://waze.com/ul?q={q}&navigate=yes",
+    }
+    return render_template("mapa_elegir.html", direccion=direccion, urls=urls)
+
+
+@embarques_bp.route("/api/mapa/qr")
+@require_embarques
+def api_mapa_qr():
+    """PNG del QR de navegacion para la direccion que se esta capturando en
+    'Nueva etiqueta' (antes de guardar, por eso recibe la direccion directo
+    en vez de un id de embarque ya creado)."""
+    direccion = request.args.get("dir", "").strip()
+    if not direccion:
+        abort(400)
+    return Response(_qr_png(_url_mapa(direccion)), mimetype="image/png")
+
+
 @embarques_bp.route("/entrega/<token>")
 def entrega_pagina(token):
     e = embarques_db.obtener_por_token(token)
@@ -590,6 +642,14 @@ def api_catalogo(tipo):
     if tipo not in ("chofer", "unidad", "paqueteria"):
         return jsonify({"ok": False, "error": "Catalogo invalido."}), 400
     return jsonify({"ok": True, "data": embarques_db.catalogo_listar(tipo)})
+
+
+@embarques_bp.route("/api/cp/<cp>")
+@require_embarques
+def api_cp(cp):
+    """Colonia(s)/municipio/estado para un codigo postal, para autocompletar la
+    direccion y evitar errores de captura (solo calle y numero quedan libres)."""
+    return jsonify({"ok": True, "data": buscar_cp(cp)})
 
 
 @embarques_bp.route("/api/embarques", methods=["POST"])
@@ -826,8 +886,8 @@ def _dibujar_total(pdf, cx, y, cw, total):
     pdf.cell(cw - _CANT_W, _ROW_H, "TOTAL", new_x=XPos.LEFT, new_y=YPos.TOP)
 
 
-_FOOTER_H = 24  # mm, franja al pie de cada etiqueta: dato de embarque + QR de entrega
-_QR_SIZE = 18   # mm
+_FOOTER_H = 24  # mm, franja al pie de cada etiqueta: dato de embarque + QRs
+_QR_SIZE = 15   # mm -- reducido de 18 para que quepan los 2 QRs (entrega y como llegar)
 
 
 def _qr_png(data):
@@ -844,26 +904,32 @@ def _tam_imagen_px(fuente):
         return img.size
 
 
-def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
+def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png, qr_mapa_png=None):
     """Pie de pagina: a la derecha el QR para que el chofer confirme la entrega desde
-    su celular; a la izquierda, si ya esta embarcada, el chofer/unidad o paqueteria/guia."""
+    su celular, y junto a el (si se conoce la direccion) el QR para abrir la ruta en
+    Google Maps/Waze; a la izquierda, si ya esta embarcada, el chofer/unidad o
+    paqueteria/guia."""
     cx = slot_x + _PAD
     cw = slot_w - 2 * _PAD
     y_top = slot_y + slot_h - _PAD - _FOOTER_H + 1
     pdf.line(cx, y_top, cx + cw, y_top)
 
-    if qr_png:
-        qr_x = cx + cw - _QR_SIZE
+    borde_der = cx + cw
+    for png, etiqueta in ((qr_png, "Confirmar entrega"), (qr_mapa_png, "Como llegar")):
+        if not png:
+            continue
+        qr_x = borde_der - _QR_SIZE
         qr_y = y_top + 1.5
         try:
-            pdf.image(qr_png, x=qr_x, y=qr_y, w=_QR_SIZE, h=_QR_SIZE)
+            pdf.image(png, x=qr_x, y=qr_y, w=_QR_SIZE, h=_QR_SIZE)
             pdf.set_xy(qr_x, qr_y + _QR_SIZE + 0.5)
-            pdf.set_font("Helvetica", "", 6)
-            pdf.cell(_QR_SIZE, 3, "Confirmar entrega", align="C", new_x=XPos.LEFT, new_y=YPos.TOP)
+            pdf.set_font("Helvetica", "", 5.5)
+            pdf.cell(_QR_SIZE, 3, etiqueta, align="C", new_x=XPos.LEFT, new_y=YPos.TOP)
+            borde_der = qr_x - 2
         except Exception:
             pass
 
-    texto_w = cw - _QR_SIZE - 3
+    texto_w = borde_der - cx - 1
     if e["estatus"] == "embarcado":
         if e["tipo_embarque"] == "propio":
             lineas = ["Envio propio", f"Chofer: {e['chofer'] or ''}", f"Unidad: {e['unidad'] or ''}"]
@@ -901,6 +967,8 @@ def etiqueta_pdf(embarque_id):
     fecha = e["fecha_creacion"][:10]
     num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
     qr_png = _qr_png(_url_entrega(e["token_entrega"]))
+    direccion_destino = _direccion_destino(e)
+    qr_mapa_png = _qr_png(_url_mapa(direccion_destino)) if direccion_destino else None
 
     try:
         productos = _partidas_factura(empresa, e["factura_cve_doc"])
@@ -939,7 +1007,7 @@ def etiqueta_pdf(embarque_id):
         y_limite = y0 + slot_h - _PAD - _FOOTER_H
         y = _dibujar_encabezado(pdf, margen, y0, slot_w, True, bulto, num_bultos,
                                  folio_txt, fecha, emisor, e, logo)
-        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
+        _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png, qr_mapa_png)
 
         idx = 0
         primero = True
@@ -951,7 +1019,7 @@ def etiqueta_pdf(embarque_id):
                 y_limite = y0 + slot_h - _PAD - _FOOTER_H
                 y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                          folio_txt, fecha, emisor, e, logo)
-                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
+                _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png, qr_mapa_png)
             primero = False
 
             while idx < len(productos) and y + _ROW_H <= y_limite:
@@ -965,7 +1033,7 @@ def etiqueta_pdf(embarque_id):
                     y_limite = y0 + slot_h - _PAD - _FOOTER_H
                     y = _dibujar_encabezado(pdf, margen, y0, slot_w, False, bulto, num_bultos,
                                              folio_txt, fecha, emisor, e, logo)
-                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png)
+                    _dibujar_pie(pdf, margen, y0, slot_w, slot_h, e, qr_png, qr_mapa_png)
                 _dibujar_total(pdf, cx, y, cw, total_cant)
                 break
             # quedan productos pero no cupieron mas filas en esta etiqueta: continuar

@@ -97,6 +97,11 @@
         <label>Nombre / Razon social</label>
         <input type="text" id="d-nombre" required>
 
+        <label>Codigo postal</label>
+        <input type="text" id="d-cp" inputmode="numeric" maxlength="5" placeholder="Ej: 54900"
+               oninput="onCpChange('d')">
+        <div class="hint" id="d-cp-msg">Escribe el codigo postal para llenar colonia, municipio, estado y pais automaticamente.</div>
+
         <div class="form-grid">
           <div>
             <label>Calle</label>
@@ -107,30 +112,25 @@
             <input type="text" id="d-numext" placeholder="Ext.">
           </div>
         </div>
+
+        <label>Colonia</label>
+        <select id="d-colonia-sel" style="display:none;" onchange="document.getElementById('d-colonia').value = this.value"></select>
+        <input type="text" id="d-colonia" placeholder="Escribe primero el codigo postal">
+
         <div class="form-grid">
           <div>
-            <label>Colonia</label>
-            <input type="text" id="d-colonia">
-          </div>
-          <div>
-            <label>Codigo postal</label>
-            <input type="text" id="d-cp">
-          </div>
-        </div>
-        <div class="form-grid">
-          <div>
-            <label>Municipio</label>
-            <input type="text" id="d-municipio">
+            <label>Municipio / Delegacion</label>
+            <input type="text" id="d-municipio" readonly>
           </div>
           <div>
             <label>Estado</label>
-            <input type="text" id="d-estado">
+            <input type="text" id="d-estado" readonly>
           </div>
         </div>
         <div class="form-grid">
           <div>
             <label>Pais</label>
-            <input type="text" id="d-pais">
+            <input type="text" id="d-pais" readonly>
           </div>
           <div>
             <label>Telefono</label>
@@ -139,6 +139,12 @@
         </div>
         <label>Referencia / indicaciones para la paqueteria</label>
         <input type="text" id="d-referencia" placeholder="Entre calles, color de fachada, etc.">
+
+        <div id="mapa-qr-wrap" style="display:none;margin-top:14px;text-align:center;">
+          <label>Como llegar</label>
+          <img id="mapa-qr-img" alt="QR para navegar a la direccion" style="width:110px;height:110px;border:1px solid #ddd;border-radius:8px;">
+          <div class="hint">Este mismo QR va impreso en la etiqueta -- escanealo para elegir Google Maps o Waze.</div>
+        </div>
 
         <label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal;cursor:pointer;margin-top:14px;">
           <input type="checkbox" id="e-emisor-cliente" style="margin-top:3px;">
@@ -262,6 +268,90 @@
     return sel ? sel.value : '';
   }
 
+  // ── Autocompletar colonia/municipio/estado/pais por codigo postal ──────
+  // Solo calle y numero quedan de captura libre; el resto se toma del CP
+  // para evitar errores de dedo. Si el CP no se encuentra en el catalogo, se
+  // deja capturar todo a mano como antes.
+  let cpTimer = {};
+  function onCpChange(prefijo) {
+    clearTimeout(cpTimer[prefijo]);
+    const cp = document.getElementById(`${prefijo}-cp`).value.trim();
+    if (!/^\d{5}$/.test(cp)) {
+      _cpNoEncontrado(prefijo, cp ? 'Faltan digitos del codigo postal.' : '');
+      return;
+    }
+    cpTimer[prefijo] = setTimeout(() => _consultarCp(prefijo, cp), 400);
+  }
+
+  async function _consultarCp(prefijo, cp) {
+    const msg = document.getElementById(`${prefijo}-cp-msg`);
+    msg.textContent = 'Buscando...';
+    try {
+      const res = await fetch(`/api/cp/${cp}`).then(r => r.json());
+      if (!res.ok || !res.data.length) {
+        _cpNoEncontrado(prefijo, 'Codigo postal no encontrado -- captura colonia/municipio/estado a mano.');
+        return;
+      }
+      const sel = document.getElementById(`${prefijo}-colonia-sel`);
+      const coloniaActual = document.getElementById(`${prefijo}-colonia`).value.trim().toLowerCase();
+      sel.innerHTML = res.data.map(c =>
+        `<option value="${escH(c.colonia)}">${escH(c.colonia)}${c.tipo ? ' (' + escH(c.tipo) + ')' : ''}</option>`
+      ).join('');
+      const coincide = res.data.find(c => c.colonia.toLowerCase() === coloniaActual);
+      sel.value = coincide ? coincide.colonia : res.data[0].colonia;
+      sel.style.display = '';
+      document.getElementById(`${prefijo}-colonia`).value = sel.value;
+      document.getElementById(`${prefijo}-colonia`).readOnly = true;
+      document.getElementById(`${prefijo}-municipio`).value = res.data[0].municipio;
+      document.getElementById(`${prefijo}-municipio`).readOnly = true;
+      document.getElementById(`${prefijo}-estado`).value = res.data[0].estado;
+      document.getElementById(`${prefijo}-estado`).readOnly = true;
+      document.getElementById(`${prefijo}-pais`).value = 'Mexico';
+      document.getElementById(`${prefijo}-pais`).readOnly = true;
+      msg.textContent = res.data.length > 1 ? `${res.data.length} colonias para este CP -- elige la correcta.` : '';
+    } catch (e) {
+      _cpNoEncontrado(prefijo, 'Error al consultar el codigo postal -- captura a mano.');
+      return;
+    }
+    if (prefijo === 'd') actualizarMapaQr();
+  }
+
+  function _cpNoEncontrado(prefijo, mensaje) {
+    document.getElementById(`${prefijo}-colonia-sel`).style.display = 'none';
+    document.getElementById(`${prefijo}-colonia`).readOnly = false;
+    document.getElementById(`${prefijo}-municipio`).readOnly = false;
+    document.getElementById(`${prefijo}-estado`).readOnly = false;
+    document.getElementById(`${prefijo}-pais`).readOnly = false;
+    document.getElementById(`${prefijo}-cp-msg`).textContent = mensaje;
+    if (prefijo === 'd') actualizarMapaQr();
+  }
+
+  // ── QR "como llegar" (Google Maps / Waze) -- misma direccion que se
+  // imprimira en la etiqueta, se ve aqui para confirmar antes de guardar ──
+  let mapaQrTimer = null;
+  function actualizarMapaQr() {
+    clearTimeout(mapaQrTimer);
+    mapaQrTimer = setTimeout(() => {
+      const calle = `${document.getElementById('d-calle').value.trim()} ${document.getElementById('d-numext').value.trim()}`.trim();
+      const partes = [
+        calle,
+        document.getElementById('d-colonia').value.trim(),
+        document.getElementById('d-municipio').value.trim(),
+        document.getElementById('d-estado').value.trim(),
+        document.getElementById('d-cp').value.trim(),
+        document.getElementById('d-pais').value.trim(),
+      ].filter(Boolean);
+      const wrap = document.getElementById('mapa-qr-wrap');
+      if (!calle || !partes.length) { wrap.style.display = 'none'; return; }
+      document.getElementById('mapa-qr-img').src = '/api/mapa/qr?dir=' + encodeURIComponent(partes.join(', '));
+      wrap.style.display = '';
+    }, 500);
+  }
+  ['d-calle', 'd-numext', 'd-colonia', 'd-municipio', 'd-estado', 'd-cp', 'd-pais'].forEach(id => {
+    document.getElementById(id).addEventListener('input', actualizarMapaQr);
+  });
+  document.getElementById('d-colonia-sel').addEventListener('change', actualizarMapaQr);
+
   fetch('/api/empresas').then(r => r.json()).then(er => {
     if (er.ok && er.data.length > 1) {
       const sel = document.getElementById('empresa');
@@ -347,6 +437,7 @@
       document.getElementById('d-pais').value = d.pais || 'Mexico';
       document.getElementById('d-telefono').value = d.telefono || '';
       document.getElementById('d-referencia').value = d.referencia || '';
+      onCpChange('d');
     } catch (e) {
       document.getElementById('guardar-msg').innerHTML = `<div class="error-msg">Error de conexion: ${e.message}</div>`;
     }

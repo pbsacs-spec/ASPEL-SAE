@@ -549,8 +549,9 @@ def api_listar():
     desde = request.args.get("desde", "").strip() or None
     hasta = request.args.get("hasta", "").strip() or None
     archivadas = request.args.get("archivadas", "").strip() == "1"
+    q = request.args.get("q", "").strip() or None
     try:
-        data = embarques_db.listar_embarques(empresa, estatus=estatus, desde=desde, hasta=hasta, archivadas=archivadas)
+        data = embarques_db.listar_embarques(empresa, estatus=estatus, desde=desde, hasta=hasta, archivadas=archivadas, q=q)
         return jsonify({"ok": True, "data": data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

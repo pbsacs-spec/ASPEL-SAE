@@ -117,6 +117,10 @@
           <select id="empresa" onchange="cargar()"></select>
         </div>
         <div class="fg">
+          <label>Factura o cliente</label>
+          <input type="text" id="q" placeholder="Ej: FAC2259 o Grupo Textil" oninput="onBuscarChange()">
+        </div>
+        <div class="fg">
           <label>Estatus</label>
           <select id="estatus" onchange="cargar()">
             <option value="">Todos</option>
@@ -232,6 +236,12 @@
     cargar();
   }
 
+  let buscarTimer = null;
+  function onBuscarChange() {
+    clearTimeout(buscarTimer);
+    buscarTimer = setTimeout(cargar, 400);
+  }
+
   async function cargar() {
     const empresa = empresaActual();
     document.getElementById('contenedor').innerHTML = '<div class="empty">Consultando...</div>';
@@ -241,9 +251,11 @@
       const estatus = document.getElementById('estatus').value;
       const desde = document.getElementById('desde').value;
       const hasta = document.getElementById('hasta').value;
+      const q = document.getElementById('q').value.trim();
       if (estatus) p.set('estatus', estatus);
       if (desde) p.set('desde', desde);
       if (hasta) p.set('hasta', hasta);
+      if (q) p.set('q', q);
       if (vistaActual === 'archivadas') p.set('archivadas', '1');
 
       const res = await fetch('/api/embarques?' + p).then(r => r.json());

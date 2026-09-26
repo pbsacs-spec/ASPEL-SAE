@@ -412,7 +412,7 @@ def crear_embarque(empresa_id, factura, destinatario, creado_por, embarque_info=
     return embarque_id
 
 
-def listar_embarques(empresa_id, estatus=None, desde=None, hasta=None, archivadas=False):
+def listar_embarques(empresa_id, estatus=None, desde=None, hasta=None, archivadas=False, q=None):
     where = ["empresa_id = ?", "archivado = ?"]
     params = [empresa_id, 1 if archivadas else 0]
     if estatus:
@@ -424,6 +424,15 @@ def listar_embarques(empresa_id, estatus=None, desde=None, hasta=None, archivada
     if hasta:
         where.append("date(fecha_creacion) <= date(?)")
         params.append(hasta)
+    if q:
+        # Busca por factura (como se ve en pantalla: serie+folio, ej. "FAC2259",
+        # o la clave completa de Aspel, ej. "FAC02259") o por nombre de
+        # cliente/destinatario -- util sobre todo en Archivadas, para encontrar
+        # una entrega vieja sin tener que acotar primero el rango de fechas.
+        where.append("(factura_serie || CAST(factura_folio AS TEXT) LIKE ? "
+                      "OR factura_cve_doc LIKE ? OR cliente_nombre LIKE ? OR dest_nombre LIKE ?)")
+        comodin = f"%{q}%"
+        params += [comodin, comodin, comodin, comodin]
     with _conn() as con:
         rows = con.execute(f"""
             SELECT * FROM embarques WHERE {" AND ".join(where)}

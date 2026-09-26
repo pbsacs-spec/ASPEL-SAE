@@ -180,13 +180,14 @@ _HTTPS_CERT = os.path.join(os.path.dirname(__file__), "https_cert", "cert.pem")
 
 def _url_entrega(token):
     """URL publica de confirmacion de entrega para el QR. Si hay certificado HTTPS
-    configurado (ver app.py: _iniciar_https_en_hilo), siempre apunta al puerto 5443
-    -- el navegador del celular exige HTTPS para permitir el GPS (navigator.geolocation),
-    sin importar si la etiqueta se genero desde el puerto 5000 normal. Sin certificado,
-    cae al mismo host/puerto de siempre (solo se pierde la opcion de GPS)."""
+    configurado (ver app.py: _iniciar_https_en_hilo), siempre apunta al puerto 443
+    (estandar, no hace falta escribirlo en la URL) -- el navegador del celular exige
+    HTTPS para permitir el GPS (navigator.geolocation), sin importar si la etiqueta
+    se genero desde el puerto 5000 normal. Sin certificado, cae al mismo host/puerto
+    de siempre (solo se pierde la opcion de GPS)."""
     if os.path.exists(_HTTPS_CERT):
         host = request.host.split(":")[0]
-        return f"https://{host}:5443/entrega/{token}"
+        return f"https://{host}/entrega/{token}"
     return request.url_root.rstrip("/") + "/entrega/" + token
 
 
@@ -196,7 +197,7 @@ def _url_mapa(direccion):
     q = quote(direccion)
     if os.path.exists(_HTTPS_CERT):
         host = request.host.split(":")[0]
-        return f"https://{host}:5443/mapa?dir={q}"
+        return f"https://{host}/mapa?dir={q}"
     return request.url_root.rstrip("/") + "/mapa?dir=" + q
 
 

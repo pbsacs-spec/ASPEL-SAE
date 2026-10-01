@@ -1,5 +1,6 @@
 Set oShell = CreateObject("WScript.Shell")
-sBase    = "C:\Users\iscbruno\aspel-inventario"
+Set oFso   = CreateObject("Scripting.FileSystemObject")
+sBase    = oFso.GetParentFolderName(WScript.ScriptFullName)
 sNode    = """C:\Program Files\nodejs\node.exe"""
 sFlaskLog = sBase & "\flask.log"
 sWaLog    = sBase & "\wa_service\wa.log"

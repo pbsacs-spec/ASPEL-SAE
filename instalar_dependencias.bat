@@ -25,10 +25,10 @@ for /f "tokens=*" %%v in ('py --version 2^>^&1') do echo  OK: %%v
 :: ── Instalar paquetes Python ──────────────────────────────────────
 echo.
 echo  [2/5] Instalando paquetes Python...
-echo  (flask, fdb, requests, openpyxl, fpdf2, qrcode, pillow)
+echo  (flask, fdb, requests, openpyxl, fpdf2, qrcode, pillow, waitress)
 echo.
 py -m pip install --upgrade pip >nul 2>&1
-py -m pip install flask fdb requests openpyxl fpdf2 qrcode pillow
+py -m pip install flask fdb requests openpyxl fpdf2 qrcode pillow waitress
 if errorlevel 1 (
     echo.
     echo  ERROR: Fallo la instalacion de paquetes Python.

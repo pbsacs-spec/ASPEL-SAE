@@ -284,4 +284,10 @@ def _iniciar_https_en_hilo():
 if __name__ == "__main__":
     _iniciar_https_en_hilo()
     iniciar_telegram_en_hilo()
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    # waitress en vez de app.run(): el servidor de desarrollo de Flask/Werkzeug
+    # trae su propia advertencia de "no usar en produccion" (sin resiliencia
+    # real ante trafico concurrente). Los puertos HTTPS (5443/443, arriba)
+    # siguen en Werkzeug por ahora -- waitress no termina TLS el mismo, eso
+    # requeriria un proxy (ej. Caddy) en frente, que es un cambio aparte.
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=5000, threads=8)

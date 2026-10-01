@@ -76,8 +76,8 @@ def _enviar_documento(token, chat_id, contenido, filename, mimetype):
 
 # ── Procesar un mensaje entrante ────────────────────────────────────
 
-def _procesar_y_responder(token, chat_id, texto):
-    resultado = _procesar(texto)
+def _procesar_y_responder(token, chat_id, texto, remitente=None):
+    resultado = _procesar(texto, remitente=remitente, canal="telegram")
 
     if isinstance(resultado, dict) and resultado.get("_archivo"):
         fmt        = resultado["fmt"]
@@ -142,8 +142,12 @@ def _polling_loop(token):
                 if not msg or "text" not in msg:
                     continue
                 chat_id = msg["chat"]["id"]
+                from_user = msg.get("from") or {}
+                username = from_user.get("username")
+                nombre = from_user.get("first_name") or ""
+                remitente = f"@{username}" if username else (nombre or str(chat_id))
                 try:
-                    _procesar_y_responder(token, chat_id, msg["text"].strip())
+                    _procesar_y_responder(token, chat_id, msg["text"].strip(), remitente)
                 except Exception as e:
                     try:
                         _api(token, "sendMessage", chat_id=chat_id, text=f"Error al consultar: {e}")

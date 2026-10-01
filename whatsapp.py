@@ -145,8 +145,11 @@ def _resolver_empresa(token):
     return keys[idx] if 0 <= idx < len(keys) else None
 
 
-def _procesar(texto, empresa_id=None, remitente=None):
-    """Retorna str (texto) o dict con _archivo=True (para generar archivo)."""
+def _procesar(texto, empresa_id=None, remitente=None, canal="whatsapp"):
+    """Retorna str (texto) o dict con _archivo=True (para generar archivo).
+    canal: 'whatsapp' o 'telegram' -- solo importa para _cmd_entregado (queda
+    registrado en embarques.entregado_via), el resto de los comandos no
+    distinguen entre canales."""
     partes = texto.strip().split(None, 1)
     cmd = partes[0].lower() if partes else ""
     arg = partes[1].strip() if len(partes) > 1 else ""
@@ -154,7 +157,7 @@ def _procesar(texto, empresa_id=None, remitente=None):
     # Numero al inicio → seleccionar empresa y reprocesar el resto
     eid = _resolver_empresa(cmd)
     if eid is not None:
-        return _procesar(arg, empresa_id=eid, remitente=remitente)
+        return _procesar(arg, empresa_id=eid, remitente=remitente, canal=canal)
 
     if cmd in ("empresas", "empresa", "lista"):
         return _cmd_empresas()
@@ -175,7 +178,7 @@ def _procesar(texto, empresa_id=None, remitente=None):
         return _cmd_archivo(cmd, arg, empresa_id, remitente)
 
     if cmd in ("entregado", "entrega", "entregue"):
-        return _cmd_entregado(arg, empresa_id, remitente)
+        return _cmd_entregado(arg, empresa_id, remitente, canal)
 
     return _cmd_exist_o_buscar(texto, empresa_id)
 
@@ -297,9 +300,12 @@ def _cmd_info(clave, empresa_id=None, remitente=None):
     return "\n".join(lineas)
 
 
-def _cmd_entregado(arg, empresa_id=None, remitente=None):
-    """Permite al chofer (o quien reciba el pedido) reportar una entrega por WhatsApp,
-    igual que escanear el QR de la etiqueta: registra fecha/hora y el numero que avisa."""
+def _cmd_entregado(arg, empresa_id=None, remitente=None, canal="whatsapp"):
+    """Permite al chofer (o quien reciba el pedido) reportar una entrega por
+    WhatsApp o Telegram, igual que escanear el QR de la etiqueta: registra
+    fecha/hora y quien avisa. Alternativa al QR (que necesita VPN/LAN) para
+    quien no la tenga -- Telegram no necesita que el que confirma alcance
+    este servidor."""
     folio_digits = "".join(c for c in (arg or "").strip() if c.isdigit())
     if not folio_digits:
         return "Indica el folio de la factura.\n_Ejemplo: entregado 2259_"
@@ -317,7 +323,7 @@ def _cmd_entregado(arg, empresa_id=None, remitente=None):
         fecha = (e["fecha_entrega"] or "")[:16].replace("T", " ")
         return f"Esta entrega ya estaba registrada el {fecha}."
 
-    embarques_db.marcar_entregado(e["id"], "whatsapp", remitente)
+    embarques_db.marcar_entregado(e["id"], canal, remitente)
     actualizado = embarques_db.obtener_embarque(e["id"])
     fecha      = (actualizado["fecha_entrega"] or "")[:16].replace("T", " ")
     folio_txt  = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}"

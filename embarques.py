@@ -1133,36 +1133,12 @@ def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
             yy += 3.8
 
 
-@embarques_bp.route("/embarques/<int:embarque_id>/etiqueta.pdf")
-@require_embarques
-def etiqueta_pdf(embarque_id):
-    empresa = _empresa_actual()
-    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
-    if not e:
-        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
-    if e["estatus"] == "entregado":
-        return jsonify({
-            "ok": False,
-            "error": "Esta etiqueta ya fue entregada y esta bloqueada para reimprimir. "
-                     "Si se perdio la etiqueta impresa, pide a un administrador que la reactive.",
-        }), 409
-
-    usar_cliente = bool(e.get("emisor_cliente"))
-    emisor = _resolver_emisor(empresa, e["cliente_clave"], usar_cliente)
-    logo = _resolver_logo(empresa, usar_cliente)
-    folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
-    fecha = e["fecha_creacion"][:10]
-    num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
-    qr_png = _qr_png(_url_entrega(e["token_entrega"]))
-    direccion_destino = _direccion_destino(e)
-    qr_mapa_png = _qr_png(_url_gps(direccion_destino)) if direccion_destino else None
-
-    try:
-        productos = _partidas_factura(empresa, e["factura_cve_doc"])
-    except Exception as ex:
-        return jsonify({"ok": False, "error": str(ex)}), 500
-    total_cant = sum(p["cantidad"] for p in productos)
-
+def _crear_documento_etiquetas():
+    """Documento compartido para una o varias etiquetas (2 por hoja, media carta).
+    Compartir el mismo pdf/estado de paginacion entre varios embarques es lo que
+    permite que la ultima etiqueta de un envio y la primera del siguiente caigan
+    en la misma hoja, en vez de desperdiciar media hoja por cada impresion
+    separada. Regresa (pdf, margen, slot_w, slot_h, nueva_etiqueta)."""
     pdf = FPDF(orientation="P", unit="mm", format="Letter")
     pdf.set_auto_page_break(False)
 
@@ -1175,10 +1151,10 @@ def etiqueta_pdf(embarque_id):
 
     def nueva_etiqueta():
         estado_pagina["total"] += 1
-        if estado_pagina["total"] > 1000:
+        if estado_pagina["total"] > 5000:
             # Salvaguarda: nunca deberiamos llegar aqui con la geometria actual;
             # evita generar un PDF descontrolado si algun calculo de espacio fallara.
-            raise RuntimeError("La etiqueta genero demasiadas paginas; revisa el numero de bultos o los productos de la factura.")
+            raise RuntimeError("Se genero un numero excesivo de etiquetas; revisa la seleccion o el numero de bultos.")
         if estado_pagina["slot"] >= 2:
             pdf.add_page()
             estado_pagina["slot"] = 0
@@ -1188,6 +1164,26 @@ def etiqueta_pdf(embarque_id):
         pdf.rect(margen, y0, slot_w, slot_h)
         pdf.set_draw_color(0, 0, 0)
         return y0
+
+    return pdf, margen, slot_w, slot_h, nueva_etiqueta
+
+
+def _dibujar_etiquetas_embarque(pdf, margen, slot_w, slot_h, nueva_etiqueta, e, empresa):
+    """Dibuja las etiquetas (una por bulto) de UN embarque en el documento
+    compartido que se le pasa. Puede llamarse varias veces seguidas (una por
+    cada embarque seleccionado) sobre el mismo pdf para que compartan hoja."""
+    usar_cliente = bool(e.get("emisor_cliente"))
+    emisor = _resolver_emisor(empresa, e["cliente_clave"], usar_cliente)
+    logo = _resolver_logo(empresa, usar_cliente)
+    folio_txt = _pdf_safe(f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"])
+    fecha = e["fecha_creacion"][:10]
+    num_bultos = max(1, min(200, int(e.get("num_bultos") or 1)))
+    qr_png = _qr_png(_url_entrega(e["token_entrega"]))
+    direccion_destino = _direccion_destino(e)
+    qr_mapa_png = _qr_png(_url_gps(direccion_destino)) if direccion_destino else None
+
+    productos = _partidas_factura(empresa, e["factura_cve_doc"])
+    total_cant = sum(p["cantidad"] for p in productos)
 
     for bulto in range(1, num_bultos + 1):
         y0 = nueva_etiqueta()
@@ -1225,11 +1221,82 @@ def etiqueta_pdf(embarque_id):
                 break
             # quedan productos pero no cupieron mas filas en esta etiqueta: continuar
 
+
+def _error_si_no_imprimible(e):
+    """None si se puede (re)imprimir; si no, el mensaje de error."""
+    if e["estatus"] == "entregado":
+        return ("Esta etiqueta ya fue entregada y esta bloqueada para reimprimir. "
+                "Si se perdio la etiqueta impresa, pide a un administrador que la reactive.")
+    return None
+
+
+@embarques_bp.route("/embarques/<int:embarque_id>/etiqueta.pdf")
+@require_embarques
+def etiqueta_pdf(embarque_id):
+    empresa = _empresa_actual()
+    e = embarques_db.obtener_embarque(embarque_id, empresa_id=empresa)
+    if not e:
+        return jsonify({"ok": False, "error": "Etiqueta no encontrada."}), 404
+    error = _error_si_no_imprimible(e)
+    if error:
+        return jsonify({"ok": False, "error": error}), 409
+
+    try:
+        pdf, margen, slot_w, slot_h, nueva_etiqueta = _crear_documento_etiquetas()
+        _dibujar_etiquetas_embarque(pdf, margen, slot_w, slot_h, nueva_etiqueta, e, empresa)
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)}), 500
+
+    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
     pdf_bytes = bytes(pdf.output())
     embarques_db.marcar_impreso(embarque_id)
     return send_file(
         io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False,
         download_name=f"etiqueta_{folio_txt}.pdf",
+    )
+
+
+@embarques_bp.route("/embarques/etiquetas.pdf")
+@require_embarques
+def etiquetas_pdf_lote():
+    """Imprime varias etiquetas (de uno o varios envios) en un solo PDF,
+    acomodandolas de a 2 por hoja en el orden en que se dieron los ids -- para
+    no desperdiciar media hoja cada vez que se imprime una etiqueta aparte."""
+    empresa = _empresa_actual()
+    ids_txt = request.args.get("ids", "").strip()
+    try:
+        ids = [int(x) for x in ids_txt.split(",") if x.strip()]
+    except ValueError:
+        return jsonify({"ok": False, "error": "Seleccion de etiquetas invalida."}), 400
+    if not ids:
+        return jsonify({"ok": False, "error": "No se selecciono ninguna etiqueta."}), 400
+    if len(ids) > 100:
+        return jsonify({"ok": False, "error": "Selecciona como maximo 100 etiquetas a la vez."}), 400
+
+    embarques_sel = []
+    for eid in ids:
+        e = embarques_db.obtener_embarque(eid, empresa_id=empresa)
+        if not e:
+            return jsonify({"ok": False, "error": f"La etiqueta #{eid} no existe."}), 404
+        error = _error_si_no_imprimible(e)
+        if error:
+            folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}".strip() or e["factura_cve_doc"]
+            return jsonify({"ok": False, "error": f"Factura {folio_txt}: {error}"}), 409
+        embarques_sel.append(e)
+
+    try:
+        pdf, margen, slot_w, slot_h, nueva_etiqueta = _crear_documento_etiquetas()
+        for e in embarques_sel:
+            _dibujar_etiquetas_embarque(pdf, margen, slot_w, slot_h, nueva_etiqueta, e, empresa)
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)}), 500
+
+    pdf_bytes = bytes(pdf.output())
+    for e in embarques_sel:
+        embarques_db.marcar_impreso(e["id"])
+    return send_file(
+        io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=False,
+        download_name=f"etiquetas_{len(embarques_sel)}.pdf",
     )
 
 

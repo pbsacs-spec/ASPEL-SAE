@@ -80,6 +80,15 @@
     .ver-fotos { display: flex; flex-wrap: wrap; gap: 8px; }
     .ver-fotos img { width: 84px; height: 84px; object-fit: cover; border-radius: 6px; border: 1px solid #e0e4ea; }
     .modal-err { color: #b02020; font-size: .82rem; margin-top: 10px; display: none; }
+
+    .barra-seleccion {
+      display: none; position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      background: #1a3a5c; color: #fff; padding: 10px 14px; border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(0,0,0,.25); align-items: center; gap: 12px; z-index: 40;
+    }
+    .barra-seleccion.show { display: flex; }
+    .barra-seleccion .btn { background: #1a7f3c; }
+    .barra-seleccion .btn-secondary { background: rgba(255,255,255,.15); color: #fff; }
   </style>
 </head>
 <body>
@@ -164,6 +173,12 @@
 
 </div>
 
+<div class="barra-seleccion" id="barraSeleccion">
+  <span id="barraSeleccionTexto"></span>
+  <button class="btn btn-sm" onclick="imprimirSeleccionadas()">Imprimir seleccionadas</button>
+  <button class="btn btn-sm btn-secondary" onclick="limpiarSeleccion()">Cancelar</button>
+</div>
+
 <div class="overlay" id="overlay" onclick="cerrarModal(event)">
   <div class="modal">
     <div class="modal-hdr">
@@ -177,6 +192,7 @@
 <script>
   const ES_ADMIN = {{ 'true' if es_admin else 'false' }};
   let filas = [];
+  let seleccionadas = new Set();
 
   const escH = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const escJS = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');
@@ -244,6 +260,7 @@
 
   async function cargar() {
     const empresa = empresaActual();
+    limpiarSeleccion();
     document.getElementById('contenedor').innerHTML = '<div class="empty">Consultando...</div>';
     try {
       const p = new URLSearchParams();
@@ -330,9 +347,17 @@
     `;
   }
 
+  function puedeSeleccionarse(f) {
+    return vistaActual === 'activas' && f.estatus !== 'entregado';
+  }
+
   function tablaHtml() {
-    let html = `<table><thead><tr>
-      <th>Factura</th><th>Destinatario</th><th>Creado</th><th>Estatus</th><th>Embarque</th><th>Acciones</th>
+    const hayImprimibles = filas.some(puedeSeleccionarse);
+    let html = `<table><thead><tr>`;
+    if (hayImprimibles) {
+      html += `<th><input type="checkbox" id="chkTodas" onchange="toggleTodas(this.checked)"></th>`;
+    }
+    html += `<th>Factura</th><th>Destinatario</th><th>Creado</th><th>Estatus</th><th>Embarque</th><th>Acciones</th>
     </tr></thead><tbody>`;
     const ESTATUS_LABEL = { pendiente: 'Pendiente', embarcado: 'Embarcado', entregado: 'Entregado' };
     filas.forEach(f => {
@@ -370,7 +395,13 @@
         }
       }
 
-      html += `<tr>
+      html += `<tr>`;
+      if (hayImprimibles) {
+        html += puedeSeleccionarse(f)
+          ? `<td><input type="checkbox" class="chk-fila" data-id="${f.id}" onchange="toggleSeleccion(${f.id}, this.checked)" ${seleccionadas.has(f.id) ? 'checked' : ''}></td>`
+          : `<td></td>`;
+      }
+      html += `
         <td><strong>${escH(folio)}</strong></td>
         <td>${escH(f.dest_nombre)}</td>
         <td>${(f.fecha_creacion || '').slice(0, 10)}</td>
@@ -381,6 +412,46 @@
     });
     html += '</tbody></table>';
     return html;
+  }
+
+  function toggleSeleccion(id, marcado) {
+    if (marcado) seleccionadas.add(id); else seleccionadas.delete(id);
+    actualizarBarraSeleccion();
+  }
+
+  function toggleTodas(marcado) {
+    filas.filter(puedeSeleccionarse).forEach(f => {
+      if (marcado) seleccionadas.add(f.id); else seleccionadas.delete(f.id);
+    });
+    document.querySelectorAll('.chk-fila').forEach(chk => { chk.checked = marcado; });
+    actualizarBarraSeleccion();
+  }
+
+  function actualizarBarraSeleccion() {
+    const barra = document.getElementById('barraSeleccion');
+    const n = seleccionadas.size;
+    barra.classList.toggle('show', n > 0);
+    document.getElementById('barraSeleccionTexto').textContent =
+      n === 1 ? '1 etiqueta seleccionada' : `${n} etiquetas seleccionadas`;
+    const chkTodas = document.getElementById('chkTodas');
+    if (chkTodas) {
+      const imprimibles = filas.filter(puedeSeleccionarse);
+      chkTodas.checked = imprimibles.length > 0 && imprimibles.every(f => seleccionadas.has(f.id));
+    }
+  }
+
+  function limpiarSeleccion() {
+    seleccionadas.clear();
+    document.querySelectorAll('.chk-fila').forEach(chk => { chk.checked = false; });
+    actualizarBarraSeleccion();
+  }
+
+  function imprimirSeleccionadas() {
+    if (!seleccionadas.size) return;
+    const p = new URLSearchParams({ ids: [...seleccionadas].join(',') });
+    const empresa = empresaActual();
+    if (empresa) p.set('empresa', empresa);
+    window.open('/embarques/etiquetas.pdf?' + p, '_blank');
   }
 
   async function cargarCatalogo(tipo, datalistId) {

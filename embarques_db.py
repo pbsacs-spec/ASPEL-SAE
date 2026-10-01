@@ -10,6 +10,8 @@ import secrets
 import sqlite3
 import threading
 
+from werkzeug.security import generate_password_hash, check_password_hash
+
 _DB_FILE = os.path.join(os.path.dirname(__file__), "embarques.db")
 _FOTOS_DIR = os.path.join(os.path.dirname(__file__), "embarque_fotos")
 os.makedirs(_FOTOS_DIR, exist_ok=True)
@@ -155,6 +157,12 @@ def init_db():
         for columna in ("chofer_id", "unidad_id"):
             if columna not in cols_emb:
                 con.execute(f"ALTER TABLE embarques ADD COLUMN {columna} INTEGER")
+
+        # Migracion: PIN de acceso del chofer a la app movil de rutas (el chofer
+        # no es un usuario de staff, no usa auth_config.ini/HTTP Basic).
+        cols_cho = [r["name"] for r in con.execute("PRAGMA table_info(choferes)").fetchall()]
+        if "pin_hash" not in cols_cho:
+            con.execute("ALTER TABLE choferes ADD COLUMN pin_hash TEXT")
 
         # Migracion: eleccion del Emisor por etiqueta (cliente facturado, para
         # logistica a nombre de terceros, vs datos fijos de la empresa) -- se
@@ -306,6 +314,41 @@ def chofer_obtener_o_crear(nombre):
             return row["id"], nombre
         cur = con.execute("INSERT INTO choferes (nombre) VALUES (?)", (nombre,))
         return cur.lastrowid, nombre
+
+
+def chofer_set_pin(chofer_id, pin):
+    """pin: texto (ej. 4-6 digitos). None/'' borra el PIN (deja al chofer sin
+    acceso a la app movil hasta que se le asigne uno de nuevo)."""
+    pin = (pin or "").strip()
+    pin_hash = generate_password_hash(pin) if pin else None
+    with _LOCK, _conn() as con:
+        con.execute("UPDATE choferes SET pin_hash = ? WHERE id = ?", (pin_hash, chofer_id))
+
+
+def chofer_validar_pin(pin):
+    """Recorre los choferes activos con PIN asignado y regresa el primero cuyo
+    hash coincida (lista corta, mismo patron que auth._credenciales_validas
+    para cuentas de staff). None si no hay coincidencia."""
+    pin = (pin or "").strip()
+    if not pin:
+        return None
+    for c in choferes_listar(solo_activos=True):
+        if c["pin_hash"] and check_password_hash(c["pin_hash"], pin):
+            return c
+    return None
+
+
+def ruta_de_chofer(empresa_id, chofer_id):
+    """Entregas pendientes asignadas a un chofer: ya embarcadas, no entregadas,
+    no archivadas -- esto ES la 'ruta del dia' (no existe una tabla aparte de
+    rutas, se reutiliza lo que 'Marcar embarcado' ya arma cada mañana)."""
+    with _conn() as con:
+        rows = con.execute("""
+            SELECT * FROM embarques
+            WHERE empresa_id = ? AND chofer_id = ? AND estatus = 'embarcado' AND archivado = 0
+            ORDER BY fecha_embarque
+        """, (empresa_id, chofer_id)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def unidades_listar(solo_activos=False):

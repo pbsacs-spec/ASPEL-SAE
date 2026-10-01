@@ -1,3 +1,4 @@
+import datetime
 import os
 import secrets
 
@@ -28,6 +29,10 @@ def _cargar_secret_key():
 
 app = Flask(__name__)
 app.secret_key = _cargar_secret_key()
+# La app movil del chofer usa sesion (PIN propio, ver embarques.require_chofer)
+# en vez de HTTP Basic -- se mantiene activa varios meses para no pedirle el
+# PIN cada dia.
+app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=90)
 app.register_blueprint(wa_bp)
 app.register_blueprint(telegram_bp)
 app.register_blueprint(db_admin_bp)

@@ -13,8 +13,10 @@ import os
 import threading
 from urllib.parse import quote
 
+import functools
+
 import qrcode
-from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g, send_file, abort, Response
+from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, g, send_file, abort, Response, session
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos, Align
 
@@ -26,6 +28,21 @@ from codigos_postales import buscar_cp
 embarques_bp = Blueprint("embarques", __name__)
 require_embarques = require_roles("administradores", "admin", realm="Aspel Inventario")
 require_admin_embarques = require_roles("admin", realm="Aspel Inventario")
+
+
+def require_chofer(view):
+    """Para la app movil del chofer: sesion propia (PIN), no HTTP Basic -- el
+    chofer no es un usuario de staff en auth_config.ini."""
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        chofer_id = session.get("chofer_id")
+        chofer = embarques_db.chofer_obtener(chofer_id) if chofer_id else None
+        if not chofer or chofer["estatus"] != "activo":
+            session.pop("chofer_id", None)
+            return redirect(url_for("embarques.chofer_login"))
+        g.chofer = chofer
+        return view(*args, **kwargs)
+    return wrapped
 
 _CFG_FILE = os.path.join(os.path.dirname(__file__), "embarque_config.ini")
 _LOCK = threading.Lock()
@@ -373,7 +390,10 @@ def pagina_choferes():
         if not nombre:
             flash("El nombre es obligatorio.", "err")
         else:
-            embarques_db.chofer_guardar(int(chofer_id) if chofer_id else None, request.form)
+            nuevo_id = embarques_db.chofer_guardar(int(chofer_id) if chofer_id else None, request.form)
+            pin = (request.form.get("pin") or "").strip()
+            if pin:
+                embarques_db.chofer_set_pin(nuevo_id, pin)
             flash(f'Chofer "{nombre}" guardado.', "ok")
         return redirect(url_for("embarques.pagina_choferes"))
 
@@ -494,33 +514,31 @@ def entrega_pagina(token):
     )
 
 
-@embarques_bp.route("/entrega/<token>/confirmar", methods=["POST"])
-def entrega_confirmar(token):
-    e = embarques_db.obtener_por_token(token)
-    if not e:
-        return jsonify({"ok": False, "error": "Liga invalida."}), 404
-
-    body = request.get_json(silent=True) or {}
+def _validar_confirmacion(body):
+    """Valida el body JSON {firma, fotos[], ubicacion} que mandan tanto la pagina
+    publica del QR como la app del chofer. Regresa (firma, fotos_bytes, lat, lon,
+    precision, error) -- error es None si todo paso, y en ese caso los demas
+    valores ya estan listos para pasarle a marcar_entregado()."""
     firma = (body.get("firma") or "").strip()
     if not firma.startswith("data:image/png;base64,"):
-        return jsonify({"ok": False, "error": "Debes firmar antes de confirmar."}), 400
+        return None, None, None, None, None, "Debes firmar antes de confirmar."
     if len(firma) > 2_000_000:
-        return jsonify({"ok": False, "error": "La firma es demasiado grande."}), 400
+        return None, None, None, None, None, "La firma es demasiado grande."
 
     fotos_in = body.get("fotos") or []
     if not isinstance(fotos_in, list) or len(fotos_in) > 3:
-        return jsonify({"ok": False, "error": "Maximo 3 fotos."}), 400
+        return None, None, None, None, None, "Maximo 3 fotos."
     fotos_bytes = []
     for foto in fotos_in:
         foto = (foto or "").strip()
         if not foto.startswith("data:image/"):
             continue
         if len(foto) > 8_000_000:
-            return jsonify({"ok": False, "error": "Una de las fotos es demasiado grande."}), 400
+            return None, None, None, None, None, "Una de las fotos es demasiado grande."
         try:
             fotos_bytes.append(base64.b64decode(foto.split(",", 1)[1]))
         except (IndexError, ValueError, base64.binascii.Error):
-            return jsonify({"ok": False, "error": "Una de las fotos no es valida."}), 400
+            return None, None, None, None, None, "Una de las fotos no es valida."
 
     lat, lon, precision = None, None, None
     ubicacion = body.get("ubicacion") or {}
@@ -535,7 +553,101 @@ def entrega_confirmar(token):
     except (TypeError, ValueError):
         lat = lon = precision = None
 
+    return firma, fotos_bytes, lat, lon, precision, None
+
+
+@embarques_bp.route("/entrega/<token>/confirmar", methods=["POST"])
+def entrega_confirmar(token):
+    e = embarques_db.obtener_por_token(token)
+    if not e:
+        return jsonify({"ok": False, "error": "Liga invalida."}), 404
+
+    body = request.get_json(silent=True) or {}
+    firma, fotos_bytes, lat, lon, precision, error = _validar_confirmacion(body)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+
     ok = embarques_db.marcar_entregado(e["id"], "qr", request.remote_addr, firma, fotos_bytes, lat, lon, precision)
+    return jsonify({"ok": True, "nuevo": ok})
+
+
+# ── App movil del chofer (PIN propio, sesion de Flask -- no es staff) ──────
+
+@embarques_bp.route("/chofer/login", methods=["GET", "POST"])
+def chofer_login():
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        chofer = embarques_db.chofer_validar_pin(pin)
+        if not chofer:
+            return render_template("chofer_login.html", error="PIN incorrecto."), 401
+        session.permanent = True
+        session["chofer_id"] = chofer["id"]
+        return redirect(url_for("embarques.chofer_ruta"))
+    return render_template("chofer_login.html", error=None)
+
+
+@embarques_bp.route("/chofer/logout", methods=["POST"])
+def chofer_logout():
+    session.pop("chofer_id", None)
+    return redirect(url_for("embarques.chofer_login"))
+
+
+@embarques_bp.route("/chofer/ruta")
+@require_chofer
+def chofer_ruta():
+    return render_template("chofer_ruta.html", chofer=g.chofer)
+
+
+_CHOFER_SW_PATH = os.path.join(os.path.dirname(__file__), "static", "chofer", "sw.js")
+
+
+@embarques_bp.route("/chofer/sw.js")
+def chofer_sw():
+    """Se sirve desde /chofer/ (no desde /static/) para que el scope por
+    default del Service Worker cubra toda esta seccion. Se lee el archivo tal
+    cual (sin pasar por Jinja) para no arriesgar que algo en el JS se
+    interprete como sintaxis de plantilla."""
+    with open(_CHOFER_SW_PATH, "r", encoding="utf-8") as f:
+        contenido = f.read()
+    return Response(contenido, mimetype="application/javascript")
+
+
+@embarques_bp.route("/api/chofer/ruta")
+@require_chofer
+def api_chofer_ruta():
+    """Entregas pendientes del chofer en sesion, en TODAS las empresas (un
+    chofer no esta ligado a una sola empresa) -- trae todo lo necesario para
+    mostrar y confirmar cada entrega sin volver a pedir nada al servidor."""
+    empresas, _ = load_empresas()
+    data = []
+    for eid, emp in empresas.items():
+        for e in embarques_db.ruta_de_chofer(eid, g.chofer["id"]):
+            e["empresa_id"] = eid
+            e["empresa_nombre"] = emp["nombre"]
+            e["direccion_texto"] = _direccion_destino(e)
+            data.append(e)
+    data.sort(key=lambda e: e.get("fecha_embarque") or "")
+    return jsonify({"ok": True, "data": data, "chofer": {"id": g.chofer["id"], "nombre": g.chofer["nombre"]}})
+
+
+@embarques_bp.route("/api/chofer/entregas/<int:embarque_id>/confirmar", methods=["POST"])
+@require_chofer
+def api_chofer_confirmar(embarque_id):
+    e = embarques_db.obtener_embarque(embarque_id)
+    if not e or e["chofer_id"] != g.chofer["id"]:
+        return jsonify({"ok": False, "error": "Esta entrega no esta asignada a tu ruta."}), 404
+    if e["estatus"] == "entregado":
+        return jsonify({"ok": True, "nuevo": False, "ya_entregada": True})
+
+    body = request.get_json(silent=True) or {}
+    firma, fotos_bytes, lat, lon, precision, error = _validar_confirmacion(body)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+
+    ok = embarques_db.marcar_entregado(
+        embarque_id, "app_chofer", f"chofer:{g.chofer['id']}:{g.chofer['nombre']}",
+        firma, fotos_bytes, lat, lon, precision,
+    )
     return jsonify({"ok": True, "nuevo": ok})
 
 

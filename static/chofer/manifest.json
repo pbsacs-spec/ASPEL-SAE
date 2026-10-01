@@ -1,0 +1,13 @@
+{
+  "name": "Mi ruta - Aspel SAE",
+  "short_name": "Mi ruta",
+  "start_url": "/chofer/ruta",
+  "scope": "/chofer/",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#1a3a5c",
+  "icons": [
+    { "src": "/static/chofer/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/static/chofer/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

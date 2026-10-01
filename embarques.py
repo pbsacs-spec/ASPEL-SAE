@@ -905,6 +905,7 @@ def api_desarchivar(embarque_id):
 _PAD = 3       # mm, margen interno de cada etiqueta
 _ROW_H = 5     # mm, alto de cada fila de producto
 _CANT_W = 18   # mm, ancho de la columna Cantidad
+_LINEAS_ENCABEZADO = 6  # renglones reservados para Emisor/Destinatario (antes 5; +1 para la referencia)
 
 
 def _partidas_factura(empresa_id, cve_doc):
@@ -936,6 +937,33 @@ def _lineas_compactas(nombre, calle, numext, numint, colonia, cp, municipio, est
     if extra:
         lineas.append(extra)
     return lineas[:5]
+
+
+def _lineas_destinatario(destinatario):
+    """Como _lineas_compactas, pero para el Destinatario: la referencia (entre
+    calles, color de casa, punto de referencia, etc.) se deja en su propio
+    renglon, en negritas y subrayada, para que el chofer la note de inmediato
+    en vez de perderse entre el resto de la direccion. Regresa [(texto, estilo), ...]
+    -- estilo es el que se le pasa a pdf.set_font (ej. "", "B", "BU")."""
+    lineas = [(destinatario["dest_nombre"] or "(sin nombre)", "B")]
+    calle_txt = destinatario["dest_calle"] or ""
+    if destinatario["dest_numext"]:
+        calle_txt += f" {destinatario['dest_numext']}"
+    if destinatario["dest_numint"]:
+        calle_txt += f" Int.{destinatario['dest_numint']}"
+    if calle_txt.strip():
+        lineas.append((calle_txt.strip(), ""))
+    l2 = ", ".join(x for x in [destinatario["dest_colonia"], f"CP {destinatario['dest_cp']}" if destinatario["dest_cp"] else ""] if x)
+    if l2:
+        lineas.append((l2, ""))
+    l3 = ", ".join(x for x in [destinatario["dest_municipio"], destinatario["dest_estado"]] if x)
+    if l3:
+        lineas.append((l3, ""))
+    if destinatario["dest_telefono"]:
+        lineas.append((f"Tel: {destinatario['dest_telefono']}", ""))
+    if destinatario["dest_referencia"]:
+        lineas.append((f"Ref: {destinatario['dest_referencia']}", "BU"))
+    return lineas[:_LINEAS_ENCABEZADO]
 
 
 def _pdf_safe(texto):
@@ -1016,19 +1044,14 @@ def _dibujar_encabezado(pdf, slot_x, slot_y, slot_w, completo, bulto, num_bultos
         emisor["calle"], emisor["numext"], emisor["numint"], emisor["colonia"], emisor["cp"],
         emisor["municipio"], emisor["estado"], extra_emisor,
     )
-    lineas_dest = _lineas_compactas(
-        destinatario["dest_nombre"], destinatario["dest_calle"], destinatario["dest_numext"],
-        destinatario["dest_numint"], destinatario["dest_colonia"], destinatario["dest_cp"],
-        destinatario["dest_municipio"], destinatario["dest_estado"],
-        f"Tel: {destinatario['dest_telefono']}" if destinatario["dest_telefono"] else "",
-    )
+    lineas_dest = _lineas_destinatario(destinatario)
     for i, linea in enumerate(lineas_emisor):
         pdf.set_xy(cx, y_txt + i * 3.6)
         pdf.set_font("Helvetica", "B" if i == 0 else "", 7.5 if i == 0 else 7)
         pdf.cell(col_w, 3.6, _truncar(pdf, linea, col_w), new_x=XPos.LEFT, new_y=YPos.TOP)
-    for i, linea in enumerate(lineas_dest):
+    for i, (linea, estilo) in enumerate(lineas_dest):
         pdf.set_xy(col2_x, y_txt + i * 3.6)
-        pdf.set_font("Helvetica", "B" if i == 0 else "", 7.5 if i == 0 else 7)
+        pdf.set_font("Helvetica", estilo, 7.5 if i == 0 else 7)
         pdf.cell(col_w_dest, 3.6, _truncar(pdf, linea, col_w_dest), new_x=XPos.LEFT, new_y=YPos.TOP)
 
     if qr_mapa_png:
@@ -1041,7 +1064,7 @@ def _dibujar_encabezado(pdf, slot_x, slot_y, slot_w, completo, bulto, num_bultos
         except Exception:
             pass
 
-    y = y_txt + 5 * 3.6 + 2
+    y = y_txt + _LINEAS_ENCABEZADO * 3.6 + 2
     pdf.dashed_line(cx, y, cx + cw, y, 1, 1)
     y += 2
     return _dibujar_fila_productos_header(pdf, cx, y, cw)
@@ -1077,8 +1100,9 @@ def _dibujar_total(pdf, cx, y, cw, total):
     pdf.cell(cw - _CANT_W, _ROW_H, "TOTAL", new_x=XPos.LEFT, new_y=YPos.TOP)
 
 
-_FOOTER_H = 24  # mm, franja al pie de cada etiqueta: dato de embarque + QR de entrega
+_FOOTER_H = 36  # mm: franja de dato de embarque + QR (24, como antes) + franja de firma en papel (12)
 _QR_SIZE = 18   # mm
+_FIRMA_H = 12   # mm, franja de "Firma de Recibido" al fondo del pie
 
 
 def _qr_png(data):
@@ -1097,7 +1121,9 @@ def _tam_imagen_px(fuente):
 
 def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
     """Pie de pagina: a la derecha el QR para que el chofer confirme la entrega desde
-    su celular; a la izquierda, si ya esta embarcada, el chofer/unidad o paqueteria/guia.
+    su celular; a la izquierda, si ya esta embarcada, el chofer/unidad o paqueteria/guia;
+    al fondo, una franja para firmar de recibido en papel con pluma -- ademas de la
+    confirmacion digital del QR, por si quien recibe no tiene celular a la mano.
     El QR "como llegar" va aparte, junto al bloque de Destinatario (ver
     _dibujar_encabezado) para no confundirlo con este."""
     cx = slot_x + _PAD
@@ -1131,6 +1157,12 @@ def _dibujar_pie(pdf, slot_x, slot_y, slot_w, slot_h, e, qr_png):
             pdf.set_xy(cx, yy)
             pdf.cell(texto_w, 3.8, _truncar(pdf, linea, texto_w), new_x=XPos.LEFT, new_y=YPos.TOP)
             yy += 3.8
+
+    y_firma = slot_y + slot_h - _PAD - _FIRMA_H + 2
+    pdf.set_xy(cx, y_firma)
+    pdf.set_font("Helvetica", "B", 7.5)
+    pdf.cell(34, 4, "Firma de Recibido:", new_x=XPos.LEFT, new_y=YPos.TOP)
+    pdf.line(cx + 35, y_firma + 7, cx + cw, y_firma + 7)
 
 
 def _crear_documento_etiquetas():

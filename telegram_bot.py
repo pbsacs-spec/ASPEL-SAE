@@ -89,11 +89,41 @@ def _descargar_foto(token, file_id):
     return r.content if r.ok else None
 
 
-# ── Fotos de evidencia (sin firma: Telegram no tiene lienzo para dibujar) ──
-# Alternativa a las fotos del QR: el chofer manda la foto directo en el chat
-# con el folio de la factura como descripcion (caption), ej. manda una foto
-# con el texto "2259". No depende de haber escrito antes "entregado" -- se
-# puede mandar la evidencia antes o despues de confirmar la entrega.
+# ── Fotos y ubicacion de evidencia (sin firma: Telegram no tiene lienzo
+# para dibujar) -- alternativa a lo que captura el QR. No depende de haber
+# escrito antes "entregado": se puede mandar esta evidencia antes o
+# despues de confirmar la entrega.
+
+def _buscar_por_folio_default(folio_digits):
+    _, settings = load_empresas()
+    return embarques_db.buscar_por_folio(settings["default"], int(folio_digits))
+
+
+# chat_id -> (embarque_id, folio_txt, timestamp). En memoria: recuerda a que
+# factura se refirio el ultimo "entregado FOLIO"/"ubicacion FOLIO"/foto con
+# folio de ese chat, para poder asociar un mensaje de ubicacion -- Telegram
+# no permite mandar un "caption" junto con la ubicacion como si fuera foto.
+_PENDIENTE_UBICACION = {}
+_VENTANA_UBICACION_SEG = 600  # 10 minutos
+
+
+def _marcar_pendiente_ubicacion(chat_id, embarque_id, folio_txt):
+    _PENDIENTE_UBICACION[chat_id] = (embarque_id, folio_txt, time.time())
+
+
+def _tomar_pendiente_ubicacion(chat_id):
+    """La consume (la borra) al leerla: cada ubicacion que se comparte requiere
+    haber indicado el folio justo antes (via 'ubicacion FOLIO', 'entregado FOLIO'
+    o una foto con folio), para no asociar por error una ubicacion mas nueva a
+    una factura ya vieja de ese chat."""
+    info = _PENDIENTE_UBICACION.pop(chat_id, None)
+    if not info:
+        return None
+    embarque_id, folio_txt, ts = info
+    if time.time() - ts > _VENTANA_UBICACION_SEG:
+        return None
+    return embarque_id, folio_txt
+
 
 def _procesar_foto(token, chat_id, msg):
     caption = (msg.get("caption") or "").strip()
@@ -104,12 +134,10 @@ def _procesar_foto(token, chat_id, msg):
                   "con el folio de la factura como descripcion (ej. 2259).")
         return
 
-    folio = int(folio_digits)
-    _, settings = load_empresas()
-    e = embarques_db.buscar_por_folio(settings["default"], folio)
+    e = _buscar_por_folio_default(folio_digits)
     if not e:
         _api(token, "sendMessage", chat_id=chat_id,
-             text=f"No encontre ninguna etiqueta de embarque con folio {folio}.")
+             text=f"No encontre ninguna etiqueta de embarque con folio {folio_digits}.")
         return
 
     file_id = msg["photo"][-1]["file_id"]
@@ -120,6 +148,7 @@ def _procesar_foto(token, chat_id, msg):
 
     guardadas, total = embarques_db.agregar_fotos(e["id"], [contenido])
     folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}"
+    _marcar_pendiente_ubicacion(chat_id, e["id"], folio_txt)
     if guardadas == 0:
         _api(token, "sendMessage", chat_id=chat_id,
              text=f"Ya hay {total} fotos guardadas para la factura {folio_txt} (maximo 3), no se agrego esta.")
@@ -127,9 +156,45 @@ def _procesar_foto(token, chat_id, msg):
 
     aviso_pendiente = ""
     if e["estatus"] != "entregado":
-        aviso_pendiente = f"\nRecuerda confirmar la entrega con: entregado {folio}"
+        aviso_pendiente = f"\nRecuerda confirmar la entrega con: entregado {folio_digits}"
     _api(token, "sendMessage", chat_id=chat_id,
          text=f"Foto guardada como evidencia de la factura {folio_txt} ({total}/3).{aviso_pendiente}")
+
+
+def _procesar_ubicacion_pedida(token, chat_id, arg):
+    """Comando 'ubicacion FOLIO' / 'gps FOLIO': solo fija a que factura se
+    referira la siguiente ubicacion que comparta, sin marcar nada entregado."""
+    folio_digits = "".join(c for c in (arg or "").strip() if c.isdigit())
+    if not folio_digits:
+        _api(token, "sendMessage", chat_id=chat_id,
+             text="Indica el folio de la factura.\nEjemplo: ubicacion 2259")
+        return
+    e = _buscar_por_folio_default(folio_digits)
+    if not e:
+        _api(token, "sendMessage", chat_id=chat_id,
+             text=f"No encontre ninguna etiqueta de embarque con folio {folio_digits}.")
+        return
+    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}"
+    _marcar_pendiente_ubicacion(chat_id, e["id"], folio_txt)
+    _api(token, "sendMessage", chat_id=chat_id,
+         text=f"Listo. Ahora comparte tu ubicacion (icono de clip -> Ubicacion) "
+              f"y se guardara para la factura {folio_txt}.")
+
+
+def _procesar_ubicacion(token, chat_id, msg):
+    loc = msg["location"]
+    pendiente = _tomar_pendiente_ubicacion(chat_id)
+    if not pendiente:
+        _api(token, "sendMessage", chat_id=chat_id,
+             text="Antes de compartir tu ubicacion, dime a que factura corresponde: "
+                  "escribe 'ubicacion FOLIO' (o 'entregado FOLIO') y despues comparte tu ubicacion.")
+        return
+    embarque_id, folio_txt = pendiente
+    ok = embarques_db.guardar_gps(embarque_id, loc["latitude"], loc["longitude"], loc.get("horizontal_accuracy"))
+    if ok:
+        _api(token, "sendMessage", chat_id=chat_id, text=f"Ubicacion guardada para la factura {folio_txt}.")
+    else:
+        _api(token, "sendMessage", chat_id=chat_id, text="No pude guardar la ubicacion, intenta de nuevo.")
 
 
 # ── Procesar un mensaje entrante ────────────────────────────────────
@@ -197,7 +262,7 @@ def _polling_loop(token):
             for update in data.get("result", []):
                 offset = update["update_id"] + 1
                 msg = update.get("message")
-                if not msg or ("text" not in msg and "photo" not in msg):
+                if not msg or not any(k in msg for k in ("text", "photo", "location")):
                     continue
                 chat_id = msg["chat"]["id"]
                 from_user = msg.get("from") or {}
@@ -207,8 +272,23 @@ def _polling_loop(token):
                 try:
                     if "photo" in msg:
                         _procesar_foto(token, chat_id, msg)
+                    elif "location" in msg:
+                        _procesar_ubicacion(token, chat_id, msg)
                     else:
-                        _procesar_y_responder(token, chat_id, msg["text"].strip(), remitente)
+                        texto = msg["text"].strip()
+                        partes = texto.split(None, 1)
+                        cmd = partes[0].lower() if partes else ""
+                        arg = partes[1] if len(partes) > 1 else ""
+                        if cmd in ("ubicacion", "ubicación", "gps"):
+                            _procesar_ubicacion_pedida(token, chat_id, arg)
+                        else:
+                            _procesar_y_responder(token, chat_id, texto, remitente)
+                            if cmd in ("entregado", "entrega", "entregue"):
+                                folio_digits = "".join(c for c in arg if c.isdigit())
+                                e = _buscar_por_folio_default(folio_digits) if folio_digits else None
+                                if e:
+                                    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}"
+                                    _marcar_pendiente_ubicacion(chat_id, e["id"], folio_txt)
                 except Exception as e:
                     try:
                         _api(token, "sendMessage", chat_id=chat_id, text=f"Error al consultar: {e}")

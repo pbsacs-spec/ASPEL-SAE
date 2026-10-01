@@ -556,6 +556,19 @@ def agregar_fotos(embarque_id, fotos_bytes, maximo=3):
     return len(nuevas), len(total)
 
 
+def guardar_gps(embarque_id, lat, lon, precision=None):
+    """Guarda/sobrescribe la ubicacion de una etiqueta, sin importar su estatus
+    (igual que agregar_fotos) -- pensado para Telegram, donde el chofer comparte
+    su ubicacion como un mensaje aparte de 'entregado FOLIO'. Regresa True si
+    la etiqueta existia."""
+    with _LOCK, _conn() as con:
+        con.execute(
+            "UPDATE embarques SET lat_entrega = ?, lon_entrega = ?, precision_entrega = ? WHERE id = ?",
+            (lat, lon, precision, embarque_id),
+        )
+        return con.total_changes > 0
+
+
 def marcar_entregado(embarque_id, via, ref, firma=None, fotos_bytes=None, lat=None, lon=None, precision=None):
     """via: 'qr' | 'whatsapp'. ref: IP (qr) o numero de telefono (whatsapp).
     firma: PNG en base64 (data URI), solo aplica para 'qr' -- por WhatsApp no hay forma

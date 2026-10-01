@@ -534,6 +534,28 @@ def fotos_de(embarque):
         return []
 
 
+def agregar_fotos(embarque_id, fotos_bytes, maximo=3):
+    """Agrega fotos de evidencia a una etiqueta ya existente, sin importar su
+    estatus (a diferencia de marcar_entregado, que solo guarda fotos en el
+    momento de pasar a 'entregado'). Pensado para Telegram: el chofer puede
+    mandar fotos sueltas del paquete antes o despues de escribir 'entregado'.
+    Respeta el limite de `maximo` fotos totales por etiqueta (descarta las
+    que ya no caben). Regresa (guardadas, total) -- guardadas = cuantas de
+    las nuevas se guardaron realmente."""
+    with _LOCK, _conn() as con:
+        row = con.execute("SELECT fotos_entrega FROM embarques WHERE id = ?", (embarque_id,)).fetchone()
+        if row is None:
+            return 0, 0
+        actuales = json.loads(row["fotos_entrega"]) if row["fotos_entrega"] else []
+        espacio = max(0, maximo - len(actuales))
+        a_guardar = fotos_bytes[:espacio]
+        nuevas = guardar_fotos(embarque_id, a_guardar) if a_guardar else []
+        total = actuales + nuevas
+        con.execute("UPDATE embarques SET fotos_entrega = ? WHERE id = ?",
+                    (json.dumps(total) if total else None, embarque_id))
+    return len(nuevas), len(total)
+
+
 def marcar_entregado(embarque_id, via, ref, firma=None, fotos_bytes=None, lat=None, lon=None, precision=None):
     """via: 'qr' | 'whatsapp'. ref: IP (qr) o numero de telefono (whatsapp).
     firma: PNG en base64 (data URI), solo aplica para 'qr' -- por WhatsApp no hay forma

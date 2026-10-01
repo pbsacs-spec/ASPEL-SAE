@@ -35,7 +35,9 @@ import time
 import requests
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+import embarques_db
 from auth import require_admin
+from db import load_empresas
 from whatsapp import _generar_archivo_busqueda, _generar_archivo_producto, _procesar
 
 telegram_bp = Blueprint("telegram", __name__)
@@ -72,6 +74,62 @@ def _enviar_documento(token, chat_id, contenido, filename, mimetype):
     files = {"document": (filename, contenido, mimetype)}
     r = requests.post(url, data={"chat_id": chat_id}, files=files, timeout=30)
     return r.json()
+
+
+def _descargar_foto(token, file_id):
+    """Telegram no manda el archivo directo en el mensaje, solo un file_id: hay
+    que pedir su ruta (getFile) y luego descargarlo de un dominio aparte
+    (api.telegram.org/file/...), ambos pasos usando el mismo token."""
+    info = _api(token, "getFile", file_id=file_id)
+    if not info.get("ok"):
+        return None
+    file_path = info["result"]["file_path"]
+    url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    r = requests.get(url, timeout=30)
+    return r.content if r.ok else None
+
+
+# ── Fotos de evidencia (sin firma: Telegram no tiene lienzo para dibujar) ──
+# Alternativa a las fotos del QR: el chofer manda la foto directo en el chat
+# con el folio de la factura como descripcion (caption), ej. manda una foto
+# con el texto "2259". No depende de haber escrito antes "entregado" -- se
+# puede mandar la evidencia antes o despues de confirmar la entrega.
+
+def _procesar_foto(token, chat_id, msg):
+    caption = (msg.get("caption") or "").strip()
+    folio_digits = "".join(c for c in caption if c.isdigit())
+    if not folio_digits:
+        _api(token, "sendMessage", chat_id=chat_id,
+             text="Para guardar la foto como evidencia de entrega, mandala otra vez "
+                  "con el folio de la factura como descripcion (ej. 2259).")
+        return
+
+    folio = int(folio_digits)
+    _, settings = load_empresas()
+    e = embarques_db.buscar_por_folio(settings["default"], folio)
+    if not e:
+        _api(token, "sendMessage", chat_id=chat_id,
+             text=f"No encontre ninguna etiqueta de embarque con folio {folio}.")
+        return
+
+    file_id = msg["photo"][-1]["file_id"]
+    contenido = _descargar_foto(token, file_id)
+    if contenido is None:
+        _api(token, "sendMessage", chat_id=chat_id, text="No pude descargar la foto, intenta de nuevo.")
+        return
+
+    guardadas, total = embarques_db.agregar_fotos(e["id"], [contenido])
+    folio_txt = f"{e['factura_serie'] or ''}{e['factura_folio'] or ''}"
+    if guardadas == 0:
+        _api(token, "sendMessage", chat_id=chat_id,
+             text=f"Ya hay {total} fotos guardadas para la factura {folio_txt} (maximo 3), no se agrego esta.")
+        return
+
+    aviso_pendiente = ""
+    if e["estatus"] != "entregado":
+        aviso_pendiente = f"\nRecuerda confirmar la entrega con: entregado {folio}"
+    _api(token, "sendMessage", chat_id=chat_id,
+         text=f"Foto guardada como evidencia de la factura {folio_txt} ({total}/3).{aviso_pendiente}")
 
 
 # ── Procesar un mensaje entrante ────────────────────────────────────
@@ -139,7 +197,7 @@ def _polling_loop(token):
             for update in data.get("result", []):
                 offset = update["update_id"] + 1
                 msg = update.get("message")
-                if not msg or "text" not in msg:
+                if not msg or ("text" not in msg and "photo" not in msg):
                     continue
                 chat_id = msg["chat"]["id"]
                 from_user = msg.get("from") or {}
@@ -147,7 +205,10 @@ def _polling_loop(token):
                 nombre = from_user.get("first_name") or ""
                 remitente = f"@{username}" if username else (nombre or str(chat_id))
                 try:
-                    _procesar_y_responder(token, chat_id, msg["text"].strip(), remitente)
+                    if "photo" in msg:
+                        _procesar_foto(token, chat_id, msg)
+                    else:
+                        _procesar_y_responder(token, chat_id, msg["text"].strip(), remitente)
                 except Exception as e:
                     try:
                         _api(token, "sendMessage", chat_id=chat_id, text=f"Error al consultar: {e}")

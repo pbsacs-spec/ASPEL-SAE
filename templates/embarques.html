@@ -502,6 +502,10 @@
     document.getElementById(`${prefijo}-unidad-nuevo`).style.display = sel.value === '__nuevo__' ? 'block' : 'none';
   }
 
+  function _nombreCanal(via) {
+    return via === 'qr' ? 'QR' : (via === 'telegram' ? 'Telegram' : 'WhatsApp');
+  }
+
   function verEntrega(id) {
     const f = filas.find(x => x.id === id);
     if (!f) return;
@@ -534,7 +538,7 @@
         <div class="ver-valor">${escH(f.dest_nombre)}</div>
 
         <label>Fecha y hora de entrega</label>
-        <div class="ver-valor">${escH((f.fecha_entrega || '').slice(0, 16).replace('T', ' '))} &middot; confirmada por ${escH(f.entregado_via === 'qr' ? 'QR' : 'WhatsApp')}</div>
+        <div class="ver-valor">${escH((f.fecha_entrega || '').slice(0, 16).replace('T', ' '))} &middot; confirmada por ${escH(_nombreCanal(f.entregado_via))}</div>
 
         ${f.lat_entrega != null && f.lon_entrega != null ? `
         <label>Ubicacion GPS</label>
@@ -548,7 +552,7 @@
 
         <label>Firma de quien recibe</label>
         <div class="ver-valor">
-          ${f.firma_entrega ? `<img class="ver-firma" src="${f.firma_entrega}" alt="Firma">` : '<span class="txt-muted">Sin firma (confirmado por WhatsApp)</span>'}
+          ${f.firma_entrega ? `<img class="ver-firma" src="${f.firma_entrega}" alt="Firma">` : `<span class="txt-muted">Sin firma (confirmado por ${escH(_nombreCanal(f.entregado_via))})</span>`}
         </div>
 
         ${fotosHtml}

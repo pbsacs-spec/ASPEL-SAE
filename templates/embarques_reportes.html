@@ -265,9 +265,13 @@
   function renderMapa(puntos) {
     if (!mapaLeaflet) {
       mapaLeaflet = L.map('mapaContenedor', { zoomControl: true });
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      // tile.openstreetmap.org es de voluntarios y bloquea apps que lo usan en
+      // produccion (ver osm.wiki/Blocked); CARTO ofrece el mismo tipo de mapa
+      // base gratis, pensado para apps, sin necesidad de cuenta ni API key.
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+        subdomains: 'abcd',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
       }).addTo(mapaLeaflet);
     } else {
       mapaLeaflet.invalidateSize();

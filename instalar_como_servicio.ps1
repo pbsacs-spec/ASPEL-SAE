@@ -4,9 +4,39 @@
 # Ejecutar como Administrador.
 
 $base   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$python = "C:\Users\iscbruno\AppData\Local\Programs\Python\Python313\python.exe"
-$node   = "C:\Program Files\nodejs\node.exe"
-$usuario = "$env:COMPUTERNAME\$env:USERNAME"
+
+# El "py launcher" (py.exe) y node.exe se buscan en el PATH en vez de una
+# ruta fija -- la ruta exacta de Python varia de equipo a equipo (depende
+# del usuario y la version con la que se instalo), asi que una ruta fija
+# aqui solo funcionaria en la maquina donde se escribio el script.
+$pyCmd = Get-Command py -ErrorAction SilentlyContinue
+if (-not $pyCmd) {
+    Write-Host "  ERROR: no se encontro 'py' en el PATH. Instala Python primero" -ForegroundColor Red
+    Write-Host "  (o corre instalar_dependencias.bat)." -ForegroundColor Red
+    exit 1
+}
+$python = $pyCmd.Source
+
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if ($nodeCmd) {
+    $node = $nodeCmd.Source
+} elseif (Test-Path "C:\Program Files\nodejs\node.exe") {
+    $node = "C:\Program Files\nodejs\node.exe"
+} else {
+    Write-Host "  ERROR: no se encontro node.exe. Instala Node.js primero" -ForegroundColor Red
+    Write-Host "  (o corre instalar_dependencias.bat)." -ForegroundColor Red
+    exit 1
+}
+
+# $env:COMPUTERNAME es siempre el nombre de ESTE equipo, aunque la cuenta
+# sea de dominio -- si la cuenta es de dominio, Register-ScheduledTask no
+# puede resolver "NOMBRE_EQUIPO\usuario" a un identificador de seguridad
+# (falla con "No se efectuo ninguna asignacion entre los nombres de cuenta
+# y los identificadores de seguridad", HRESULT 0x80070534) porque esa
+# cuenta no existe localmente con ese nombre. $env:USERDOMAIN si refleja
+# correctamente el dominio real (o el nombre del equipo, si la cuenta es
+# local) segun corresponda en cada maquina.
+$usuario = "$env:USERDOMAIN\$env:USERNAME"
 
 Write-Host ""
 Write-Host "  Instalador de servicios Aspel Inventario" -ForegroundColor Cyan

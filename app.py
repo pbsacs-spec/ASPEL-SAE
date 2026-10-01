@@ -45,6 +45,19 @@ def _sin_cache(resp):
     return resp
 
 
+@app.after_request
+def _cabeceras_seguridad(resp):
+    """Cabeceras basicas, sin riesgo de romper nada (no se toca Content-Security-Policy
+    porque las plantillas usan <script> inline en todos lados y una CSP estricta las
+    rompería; esto cubre lo mas barato/util si el sitio llegara a exponerse a internet)."""
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    if request.is_secure:
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return resp
+
+
 @app.route("/")
 @require_dashboard
 def index():

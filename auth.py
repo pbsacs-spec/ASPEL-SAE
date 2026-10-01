@@ -13,6 +13,7 @@ import functools
 import os
 import secrets
 import threading
+import time
 
 from flask import request, Response, g
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -169,16 +170,58 @@ def _no_autorizado(realm):
     )
 
 
+# ── Limite de intentos fallidos (fuerza bruta) ──────────────────────────
+# En memoria (no persiste a disco): alcanza para frenar un ataque
+# automatizado contra el login, que es el riesgo real de exponer el sitio
+# a internet -- no es un registro de auditoria, se reinicia si se reinicia
+# el servicio.
+_INTENTOS_LOCK = threading.Lock()
+_INTENTOS_FALLIDOS = {}  # ip -> {"fallos": [timestamp, ...], "bloqueado_hasta": timestamp}
+_MAX_INTENTOS      = 5
+_VENTANA_SEGUNDOS  = 300   # 5 min para acumular los intentos
+_BLOQUEO_SEGUNDOS  = 900   # 15 min de bloqueo al superar el limite
+
+
+def _ip_bloqueada(ip):
+    with _INTENTOS_LOCK:
+        info = _INTENTOS_FALLIDOS.get(ip)
+        return bool(info) and time.time() < info["bloqueado_hasta"]
+
+
+def _registrar_fallo(ip):
+    ahora = time.time()
+    with _INTENTOS_LOCK:
+        info = _INTENTOS_FALLIDOS.setdefault(ip, {"fallos": [], "bloqueado_hasta": 0})
+        info["fallos"] = [t for t in info["fallos"] if ahora - t < _VENTANA_SEGUNDOS]
+        info["fallos"].append(ahora)
+        if len(info["fallos"]) >= _MAX_INTENTOS:
+            info["bloqueado_hasta"] = ahora + _BLOQUEO_SEGUNDOS
+            info["fallos"] = []
+
+
+def _registrar_exito(ip):
+    with _INTENTOS_LOCK:
+        _INTENTOS_FALLIDOS.pop(ip, None)
+
+
 def require_roles(*roles, realm="Aspel Inventario"):
     """Exige credenciales validas cuyo rol este entre los dados.
     En la vista, g.role y g.username quedan con los datos autenticados."""
     def decorator(view):
         @functools.wraps(view)
         def wrapped(*args, **kwargs):
+            ip = request.remote_addr or "desconocida"
+            if _ip_bloqueada(ip):
+                return Response(
+                    "Demasiados intentos fallidos. Intenta de nuevo en unos minutos.", 429,
+                )
             auth = request.authorization
             role = _credenciales_validas(auth.username, auth.password) if auth else None
             if role is None or role not in roles:
+                if auth is not None:
+                    _registrar_fallo(ip)
                 return _no_autorizado(realm)
+            _registrar_exito(ip)
             g.role = role
             g.username = auth.username
             return view(*args, **kwargs)

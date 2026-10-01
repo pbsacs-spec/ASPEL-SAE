@@ -114,6 +114,8 @@
 
   let mapaLeaflet = null;
   let capaPuntos = null;
+  let capaEstados = null;
+  let estadosGeoJSON = null;
 
   function empresaActual() {
     const sel = document.getElementById('empresa');
@@ -208,7 +210,7 @@
         <div class="card-hdr">Mapa de entregas</div>
         <div class="card-body">
           <div id="mapaContenedor"></div>
-          <div class="mapa-hint">Solo se muestran las entregas confirmadas por QR con ubicacion GPS disponible. El mapa de fondo requiere conexion a internet en este navegador.</div>
+          <div class="mapa-hint">Solo se muestran las entregas confirmadas por QR con ubicacion GPS disponible. El mapa de fondo (estados de Mexico) no depende de internet.</div>
         </div>
       </div>
     `;
@@ -262,24 +264,27 @@
     el.innerHTML = html;
   }
 
-  function renderMapa(puntos) {
+  async function renderMapa(puntos) {
     if (!mapaLeaflet) {
-      mapaLeaflet = L.map('mapaContenedor', { zoomControl: true });
-      // tile.openstreetmap.org es de voluntarios y bloquea apps que lo usan en
-      // produccion (ver osm.wiki/Blocked); CARTO ofrece el mismo tipo de mapa
-      // base gratis, pensado para apps, sin necesidad de cuenta ni API key.
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd',
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
+      // Sin tiles de ningun servidor externo (tile.openstreetmap.org y CARTO
+      // terminaron bloqueando el uso: ver git log) -- en vez de eso se dibujan
+      // los estados de Mexico con el mismo geojson que ya trae /ventas sin
+      // depender de internet, y encima los puntos de entrega.
+      mapaLeaflet = L.map('mapaContenedor', { zoomControl: true, attributionControl: false });
+      if (!estadosGeoJSON) {
+        estadosGeoJSON = await fetch('/static/vendor/geo/estados.json').then(r => r.json());
+      }
+      capaEstados = L.geoJSON(estadosGeoJSON, {
+        style: { fillColor: '#eef2f7', weight: 1, color: '#fff', fillOpacity: 1 },
       }).addTo(mapaLeaflet);
+      mapaLeaflet.setView([23.6345, -102.5528], 5);
     } else {
       mapaLeaflet.invalidateSize();
     }
     if (capaPuntos) { mapaLeaflet.removeLayer(capaPuntos); capaPuntos = null; }
 
     if (!puntos.length) {
-      mapaLeaflet.setView([23.6345, -102.5528], 5); // centro de Mexico
+      try { mapaLeaflet.fitBounds(capaEstados.getBounds()); } catch (e) {}
       return;
     }
     capaPuntos = L.layerGroup(puntos.map(p => {
@@ -295,7 +300,7 @@
     try {
       mapaLeaflet.fitBounds(capaPuntos.getBounds(), { padding: [20, 20], maxZoom: 14 });
     } catch (e) {
-      mapaLeaflet.setView([23.6345, -102.5528], 5);
+      try { mapaLeaflet.fitBounds(capaEstados.getBounds()); } catch (e2) {}
     }
   }
 </script>

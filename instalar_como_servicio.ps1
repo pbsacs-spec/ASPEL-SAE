@@ -3,6 +3,20 @@
 # Los procesos arrancan con el sistema y sobreviven el cierre de sesion.
 # Ejecutar como Administrador.
 
+# Register-ScheduledTask con -RunLevel Highest necesita que la propia consola
+# ya este elevada -- si no, truena con "Acceso denegado" (HRESULT 0x80070005)
+# aunque el usuario/contrasena sean correctos. Se valida aqui, antes de pedir
+# la contrasena, para no hacer que la escriban en vano.
+$esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $esAdmin) {
+    Write-Host ""
+    Write-Host "  ERROR: este script debe correrse como Administrador." -ForegroundColor Red
+    Write-Host "  Cierra esta ventana, haz clic derecho en PowerShell y elige" -ForegroundColor Red
+    Write-Host "  'Ejecutar como administrador', y vuelve a correr este script." -ForegroundColor Red
+    Write-Host ""
+    exit 1
+}
+
 $base   = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # El "py launcher" (py.exe) y node.exe se buscan en el PATH en vez de una
@@ -69,18 +83,23 @@ $settings_flask = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -MultipleInstances   IgnoreNew
 
-Register-ScheduledTask `
-    -TaskName    "AspelInventario-Flask" `
-    -Description "Aspel Inventario - Servidor web Flask (puerto 5000)" `
-    -Action      $action_flask `
-    -Trigger     $trigger_flask `
-    -Settings    $settings_flask `
-    -RunLevel    Highest `
-    -User        $usuario `
-    -Password    $pass `
-    -Force | Out-Null
-
-Write-Host "  [OK] Tarea Flask registrada" -ForegroundColor Green
+$flaskOk = $true
+try {
+    Register-ScheduledTask `
+        -TaskName    "AspelInventario-Flask" `
+        -Description "Aspel Inventario - Servidor web Flask (puerto 5000)" `
+        -Action      $action_flask `
+        -Trigger     $trigger_flask `
+        -Settings    $settings_flask `
+        -RunLevel    Highest `
+        -User        $usuario `
+        -Password    $pass `
+        -Force -ErrorAction Stop | Out-Null
+    Write-Host "  [OK] Tarea Flask registrada" -ForegroundColor Green
+} catch {
+    $flaskOk = $false
+    Write-Host "  [ERROR] No se pudo registrar la tarea Flask: $($_.Exception.Message)" -ForegroundColor Red
+}
 
 # ── WhatsApp / Node ────────────────────────────────────────────────────────────
 # ping -n 16 espera ~15 segundos para que Flask levante antes que Node
@@ -99,29 +118,41 @@ $settings_wa = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -MultipleInstances   IgnoreNew
 
-Register-ScheduledTask `
-    -TaskName    "AspelInventario-WhatsApp" `
-    -Description "Aspel Inventario - Servicio WhatsApp Web (puerto 5001)" `
-    -Action      $action_wa `
-    -Trigger     $trigger_wa `
-    -Settings    $settings_wa `
-    -RunLevel    Highest `
-    -User        $usuario `
-    -Password    $pass `
-    -Force | Out-Null
-
-Write-Host "  [OK] Tarea WhatsApp registrada" -ForegroundColor Green
+$waOk = $true
+try {
+    Register-ScheduledTask `
+        -TaskName    "AspelInventario-WhatsApp" `
+        -Description "Aspel Inventario - Servicio WhatsApp Web (puerto 5001)" `
+        -Action      $action_wa `
+        -Trigger     $trigger_wa `
+        -Settings    $settings_wa `
+        -RunLevel    Highest `
+        -User        $usuario `
+        -Password    $pass `
+        -Force -ErrorAction Stop | Out-Null
+    Write-Host "  [OK] Tarea WhatsApp registrada" -ForegroundColor Green
+} catch {
+    $waOk = $false
+    Write-Host "  [ERROR] No se pudo registrar la tarea WhatsApp: $($_.Exception.Message)" -ForegroundColor Red
+}
 
 $pass = $null
+
+if (-not $flaskOk -and -not $waOk) {
+    Write-Host ""
+    Write-Host "  Ninguna tarea se pudo registrar. Revisa que esta consola este" -ForegroundColor Red
+    Write-Host "  corriendo como Administrador y que la contrasena sea correcta." -ForegroundColor Red
+    exit 1
+}
 
 # ── Iniciar ahora ──────────────────────────────────────────────────────────────
 
 Write-Host ""
 $resp = Read-Host "  Iniciar los servicios ahora? (S/N)"
 if ($resp -match "^[Ss]") {
-    Start-ScheduledTask -TaskName "AspelInventario-Flask"
+    if ($flaskOk) { Start-ScheduledTask -TaskName "AspelInventario-Flask" }
     Start-Sleep -Seconds 5
-    Start-ScheduledTask -TaskName "AspelInventario-WhatsApp"
+    if ($waOk) { Start-ScheduledTask -TaskName "AspelInventario-WhatsApp" }
     Write-Host "  [OK] Servicios iniciados" -ForegroundColor Green
 }
 
